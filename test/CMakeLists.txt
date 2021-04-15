@@ -27,6 +27,6 @@ foreach(ut IN LISTS UNIT_TESTS)
   target_link_libraries(${target} koru)
   target_compile_options(${target} PRIVATE /WX /W4)
   target_include_directories(${target} PUBLIC ${DOCTEST_INCLUDE_DIR})
-    add_dependencies(koru-tests ${target})
+  add_dependencies(koru-tests ${target})
 
 endforeach()

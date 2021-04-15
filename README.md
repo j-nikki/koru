@@ -7,6 +7,8 @@ On the account of aforementioned, it is evident that the approach opted for here
 
 \*It is actually possible to wait on more than `MAXIMUM_WAIT_OBJECTS` handles, say, by creating `⌈N/MAXIMUM_WAIT_OBJECTS⌉` threads, where `N` is the number of handles to wait on, and each thread waits on up to `MAXIMUM_WAIT_OBJECTS` handles.
 
+This is a work-in-progress project – the API is inchoate and subject to change.
+
 ## Demo
 
 An abridgement of `write_hash` in `test/hash.cpp`:

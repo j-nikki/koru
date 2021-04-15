@@ -22,6 +22,7 @@ namespace detail
 #define KORU_concat(A, B) KORU_concat_exp(A, B)
 #define KORU_concat_exp(A, B) A##B
 
+// Used when it is an error in the design for the inlining not to take place.
 #define KORU_inline inline __forceinline
 
 #define KORU_fref_args KORU_concat(FrefArgs, __LINE__)
@@ -58,12 +59,6 @@ constexpr KORU_inline auto if_(T &&x, F &&f, Args &&...args) noexcept(
         return static_cast<T &&>(x);
     else
         return static_cast<F &&>(f)(static_cast<Args>(args)...);
-};
-
-template <class T>
-concept stores_exceptions = requires(T &x)
-{
-    x.set_exception(std::current_exception());
 };
 
 struct empty {
@@ -319,8 +314,8 @@ class context
         friend class context;
 
         template <class OpT, class BufT>
-        constexpr KORU_inline file_task(context &c, OpT op, HANDLE hfile,
-                                        uint64_t offset, BufT buf, DWORD nbytes)
+        KORU_inline file_task(context &c, OpT op, HANDLE hfile, uint64_t offset,
+                              BufT buf, DWORD nbytes)
         {
             if constexpr (CS.atomic_ios)
                 last_.lk = {c.last_.mtx};
@@ -398,8 +393,8 @@ class context
     /// @param buffer A pointer denoting the recipient buffer.
     /// @param nbytes The maximum number of bytes to read.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] file_task read(HANDLE hfile, uint64_t offset, LPVOID buffer,
-                                 DWORD nbytes)
+    [[nodiscard]] KORU_inline file_task read(HANDLE hfile, uint64_t offset,
+                                             LPVOID buffer, DWORD nbytes)
     {
         // The call to ReadFile() has to be 'memoized' like this because the
         // OVERLAPPED structure supplied to the call has to persist in
@@ -413,7 +408,8 @@ class context
     /// @param buffer A pointer denoting the recipient buffer.
     /// @param nbytes The maximum number of bytes to read.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] auto read(file::location l, LPVOID buffer, DWORD nbytes)
+    [[nodiscard]] KORU_inline auto read(file::location l, LPVOID buffer,
+                                        DWORD nbytes)
     {
         return read(l.handle, l.offset, buffer, nbytes);
     }
@@ -424,8 +420,8 @@ class context
     /// @param buffer A pointer denoting the source buffer.
     /// @param nbytes The maximum number of bytes to write.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] file_task write(HANDLE hfile, uint64_t offset, LPCVOID buffer,
-                                  DWORD nbytes)
+    [[nodiscard]] KORU_inline file_task write(HANDLE hfile, uint64_t offset,
+                                              LPCVOID buffer, DWORD nbytes)
     {
         // The call to WriteFile() has to be 'memoized' like this because
         // the OVERLAPPED structure supplied to the call has to persist in
@@ -439,7 +435,8 @@ class context
     /// @param buffer A pointer denoting the source buffer.
     /// @param nbytes The maximum number of bytes to write.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] auto write(file::location l, LPCVOID buffer, DWORD nbytes)
+    [[nodiscard]] KORU_inline auto write(file::location l, LPCVOID buffer,
+                                         DWORD nbytes)
     {
         return write(l.handle, l.offset, buffer, nbytes);
     }
