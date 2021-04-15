@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+	
+	<!--koru::context-->
+	<Type Name="koru::detail::context&lt;*&gt;::item">
+		<DisplayString>{{ event={((void**)this)[0]} coro={((coro_ptr*)((char*)this+off))[0]} }}</DisplayString>
+		<Expand>
+			<Item Name="[event]">((void**)this)[0]</Item>
+			<Item Name="[coro]">((coro_ptr*)((char*)this+off))[0]</Item>
+		</Expand>
+	</Type>
+	<Type Name="koru::detail::context&lt;*&gt;">
+		<DisplayString>{{ size={last_.sz} }}</DisplayString>
+		<Expand>
+			<Item Name="[size]">last_.sz</Item>
+			<CustomListItems>
+				<Variable Name="i" InitialValue="init_sz"/>
+				<Size>last_.sz</Size>
+				<Loop>
+					<Break Condition="i==last_.sz"/>
+					<Item>*(item*)(evs_+i)</Item>
+					<Exec>i++</Exec>
+				</Loop>
+			</CustomListItems>
+		</Expand>
+	</Type>
+	
+	<!--koru::sync_task-->
+	<Type Name="koru::detail::sync_task&lt;*&gt;">
+		<Intrinsic Name="noinit" Expression="*(int64_t*)&amp;buf==0xddddddddddddddddll &amp;&amp; (sizeof(std::exception_ptr)==8 || *((int64_t*)&amp;buf+1)==0xddddddddddddddddll)"/>
+		<DisplayString Condition="noinit()">{{ error=... value=... }}</DisplayString>
+		<DisplayString Condition="!noinit() &amp;&amp; error">{{ error=true value={*(std::exception_ptr*)&amp;buf} }}</DisplayString>
+		<DisplayString Condition="!noinit() &amp;&amp; !error">{{ error=false value={*($T1*)&amp;buf} }}</DisplayString>
+		<Expand>
+			<Item Name="[error]" Condition="!noinit()">error</Item>
+			<Item Name="[value]" Condition="!noinit() &amp;&amp; !error">*($T1*)&amp;buf</Item>
+			<Item Name="[value]" Condition="!noinit() &amp;&amp; error">*(std::exception_ptr*)&amp;buf</Item>
+		</Expand>
+	</Type>
+	<Type Name="koru::detail::sync_task&lt;void&gt;">
+		<Intrinsic Name="noinit" Expression="*(int64_t*)&amp;buf==0xddddddddddddddddll &amp;&amp; (sizeof(std::exception_ptr)==8 || *((int64_t*)&amp;buf+1)==0xddddddddddddddddll)"/>
+		<Intrinsic Name="error" Expression="*(int64_t*)&amp;buf || *((int64_t*)&amp;buf+1)"/>
+		<DisplayString Condition="noinit()">{{ error=... value=... }}</DisplayString>
+		<DisplayString Condition="!noinit() &amp;&amp; error()">{{ error=true value={*(std::exception_ptr*)&amp;buf} }}</DisplayString>
+		<DisplayString Condition="!noinit() &amp;&amp; !error()">{{ error=false }}</DisplayString>
+		<Expand>
+			<Item Name="[error]" Condition="!noinit()">error()</Item>
+			<Item Name="[value]" Condition="!noinit() &amp;&amp; error()">*(std::exception_ptr*)&amp;buf</Item>
+		</Expand>
+	</Type>
+	
+</AutoVisualizer>
