@@ -1,5 +1,13 @@
 ﻿#pragma once
 
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
+#define _WIN32_WINNT 0x0600 /* minimum for SRWLs */
+#endif
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
@@ -19,6 +27,37 @@ enum class access : DWORD {
 
 namespace detail
 {
+#ifndef KORU_DEBUG
+#ifdef NDEBUG
+#define KORU_DEBUG 0
+#else
+#define KORU_DEBUG 1
+#endif
+#endif
+
+#if KORU_DEBUG
+#define KORU_dbg(...) __VA_ARGS__
+#define KORU_ndbg(...)
+#else
+#define KORU_dbg(...)
+#define KORU_ndbg(...) __VA_ARGS__
+#endif
+
+#if KORU_DEBUG
+#define KORU_assert(Expr)                                                      \
+    [](bool e) {                                                               \
+        if (std::is_constant_evaluated())                                      \
+            if (!e)                                                            \
+                throw std::runtime_error{#Expr " != true"};                    \
+            else if (!e) {                                                     \
+                fprintf(stderr, "%s\n", #Expr " != true");                     \
+                std::terminate();                                              \
+            }                                                                  \
+    }(Expr)
+#else
+#define KORU_assert(Expr) __assume(Expr)
+#endif
+
 #define KORU_concat(A, B) KORU_concat_exp(A, B)
 #define KORU_concat_exp(A, B) A##B
 
@@ -50,7 +89,8 @@ constexpr KORU_inline T &or_(T &val, F &&f, Args &&...args) noexcept(
 };
 
 template <bool Test, class T, class F, class... Args>
-constexpr KORU_inline auto if_(T &&x, F &&f, Args &&...args) noexcept(
+constexpr KORU_inline auto
+if_([[maybe_unused]] T &&x, F &&f, Args &&...args) noexcept(
     noexcept(static_cast<F &&>(f)(static_cast<Args>(args)...)))
     -> std::conditional_t<
         Test, T, decltype(static_cast<F &&>(f)(static_cast<Args>(args)...))>
@@ -64,41 +104,37 @@ constexpr KORU_inline auto if_(T &&x, F &&f, Args &&...args) noexcept(
 struct empty {
 };
 
-#ifndef KORU_DEBUG
-#ifdef NDEBUG
-#define KORU_DEBUG 0
-#else
-#define KORU_DEBUG 1
-#endif
-#endif
+template <bool Shared>
+class lock
+{
+  public:
+    lock(const lock &) = delete;
+    lock(lock &&)      = delete;
+    KORU_inline lock(SRWLOCK &srwl) noexcept : srwl_{&srwl}
+    {
+        if constexpr (Shared)
+            AcquireSRWLockShared(&srwl);
+        else
+            AcquireSRWLockExclusive(&srwl);
+    }
+    ~lock()
+    {
+        if (srwl_)
+            unlock();
+    }
+    KORU_inline void unlock() noexcept
+    {
+        KORU_assert(srwl_);
+        if constexpr (Shared)
+            ReleaseSRWLockShared(srwl_);
+        else
+            ReleaseSRWLockExclusive(srwl_);
+        srwl_ = nullptr;
+    }
 
-#if KORU_DEBUG
-#define KORU_dbg(...) __VA_ARGS__
-#define KORU_ndbg(...)
-#else
-#define KORU_dbg(...)
-#define KORU_ndbg(...) __VA_ARGS__
-#endif
-
-#if KORU_DEBUG
-#define KORU_assert(Expr)                                                      \
-    []() {                                                                     \
-        if (std::is_constant_evaluated())                                      \
-            return [](bool e) {                                                \
-                if (!e)                                                        \
-                    throw std::runtime_error{#Expr " != true"};                \
-            };                                                                 \
-        else                                                                   \
-            return [](bool e) {                                                \
-                if (!e) {                                                      \
-                    fprintf(stderr, "%s\n", #Expr " != true");                 \
-                    std::terminate();                                          \
-                }                                                              \
-            };                                                                 \
-    }()(Expr)
-#else
-#define KORU_assert(Expr) __assume(Expr)
-#endif
+  private:
+    SRWLOCK *srwl_;
+};
 
 //
 // SYNCHRONOUS TASK : Coroutine assuming coöperative multitasking
@@ -118,7 +154,7 @@ class sync_pointer
         friend class sync_task;
         friend class sync_pointer;
 
-        constexpr storage()
+        KORU_inline storage()
         {
             KORU_dbg(std::fill_n(std::bit_cast<char *>(&buf),
                                  sizeof(std::exception_ptr), 0xddi8));
@@ -136,6 +172,7 @@ class sync_pointer
         }
         ~storage()
         {
+            // TODO: error if exception is thrown before storee init
             if (error)
                 std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
             else
@@ -151,7 +188,7 @@ class sync_pointer
         friend class sync_task;
         friend class sync_pointer;
 
-        constexpr storage()
+        KORU_inline storage()
         {
             KORU_dbg(std::fill_n(std::bit_cast<char *>(&buf),
                                  sizeof(std::exception_ptr), 0xddi8));
@@ -163,7 +200,7 @@ class sync_pointer
             if (auto &e = *std::bit_cast<ex_ptr *>(&buf))
                 std::rethrow_exception(static_cast<ex_ptr &&>(e));
         }
-        ~storage() { std::bit_cast<ex_ptr *>(&buf)->~ex_ptr(); }
+        ~storage() { std::bit_cast<ex_ptr *>(&buf)->~ex_ptr(); } // TODO ^
         std::aligned_storage_t<sizeof(ex_ptr), alignof(ex_ptr)> buf;
     };
 
@@ -237,44 +274,25 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
     using promise_type = promise<T>;
 };
 
-/// @brief Dictates the behavior of koru::context.
-struct context_settings {
-    // Whether it's possible for an I/O to be submitted while
-    // WaitForMultipleObjects is ongoing.
-    bool async_ios = false;
-    // Whether it's possible for multiple I/O submissions to happen
-    // simultaneously. Required by async_ios.
-    bool atomic_ios = async_ios;
-    // The maximum simultaneously awaited-on I/Os. Can not exceed (async_ios
-    // ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS).
-    std::size_t max_ios = static_cast<std::size_t>(
-        async_ios ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS);
-};
-
 //
 // I/O CONTEXT : WFMO loop awakening coroutines awaiting async I/Os
 //
 
-#ifdef __INTELLISENSE__ /* 20210413 IntelliSense doesn't seem to like NTTP */
-template <class = void>
-class context
-{
-    static constexpr context_settings CS = {};
-#else
 /// @brief Orchestrates the awaiting of asynchronous I/Os.
-/// @tparam CS Dictates the behavior of instances.
-template <context_settings CS = {}>
+/// @tparam AtomicIos Whether it's possible for multiple I/O submissions to happen simultaneously. Required by AsyncIos.
+/// @tparam AsyncIos Whether it's possible for an I/O to be submitted while WaitForMultipleObjects is ongoing.
+/// @tparam MaxIos The maximum simultaneously awaited-on I/Os; can not exceed (async_ios ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS).
+template <bool AtomicIos = false, bool AsyncIos = false,
+          std::size_t MaxIos = static_cast<std::size_t>(
+              AsyncIos ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS)>
 class context
 {
-#endif
-    static_assert(!CS.async_ios || CS.atomic_ios,
-                  "atomic_ios is required by async_ios");
-    static_assert(CS.max_ios <= (CS.async_ios ? MAXIMUM_WAIT_OBJECTS - 1
-                                              : MAXIMUM_WAIT_OBJECTS),
-                  "max_ios is too big");
+    static_assert(!AsyncIos || AtomicIos, "AtomicIos is required by AsyncIos");
+    static_assert(MaxIos <= (AsyncIos ? MAXIMUM_WAIT_OBJECTS - 1
+                                      : MAXIMUM_WAIT_OBJECTS),
+                  "MaxIos is too big");
 
-    static constexpr std::size_t nmax =
-        CS.async_ios ? CS.max_ios + 1 : CS.max_ios;
+    static constexpr std::size_t nmax = AsyncIos ? MaxIos + 1 : MaxIos;
 
     // Make Natvis show the original coroutine function name and signature and
     // the current suspension point (added in VS19 version 16.10 Preview 2).
@@ -316,10 +334,8 @@ class context
         template <class OpT, class BufT>
         KORU_inline file_task(context &c, OpT op, HANDLE hfile, uint64_t offset,
                               BufT buf, DWORD nbytes)
+            : last_{c.last_}
         {
-            if constexpr (CS.atomic_ios)
-                last_.lk = {c.last_.mtx};
-
             ol_.Pointer = std::bit_cast<PVOID>(offset);
             ol_.hEvent =
                 detail::or_(c.evs_[c.last_.sz], KORU_fref(CreateEventW),
@@ -328,15 +344,15 @@ class context
             if (op(hfile, buf, nbytes, nullptr, &ol_)) {
                 // I/O completed synchronously (e.g., cache hit)
                 last_.p = nullptr;
-                if constexpr (CS.atomic_ios)
-                    last_.lk.unlock();
+                if constexpr (AtomicIos)
+                    last_.unlock();
             } else if (GetLastError() != ERROR_IO_PENDING) {
                 // Error occurred
                 detail::throw_last_winapi_error();
             } else {
                 // Async I/O initiated successfully
                 last_.p = &c.coros_[c.last_.sz++];
-                if constexpr (CS.async_ios)
+                if constexpr (AsyncIos)
                     SetEvent(c.evs_[0]);
             }
         }
@@ -354,23 +370,28 @@ class context
         void await_suspend(std::coroutine_handle<> h)
         {
             *last_.p = h KORU_ndbg(.address());
-            if constexpr (CS.atomic_ios)
-                last_.lk.unlock();
+            if constexpr (AtomicIos)
+                last_.unlock();
         }
 
       private:
         OVERLAPPED ol_;
         struct ptr {
+            constexpr KORU_inline ptr(const auto &) {}
             coro_ptr *p;
         };
-        struct ptr_and_lock {
+        struct ptr_and_lock : lock<false> {
+            constexpr KORU_inline ptr_and_lock(auto &x) : lock<false>{x.srwl} {}
             coro_ptr *p;
-            std::unique_lock<std::mutex> lk;
         };
-        std::conditional_t<CS.atomic_ios, ptr_and_lock, ptr> last_;
+        std::conditional_t<AtomicIos, ptr_and_lock, ptr> last_;
     };
 
   public:
+    [[nodiscard]] context()  = default;
+    context(const context &) = delete;
+    context(context &&)      = delete;
+
     /// @brief Opens a file that can be operated on by *this.
     /// @param fname WinAPI-conformant path specifier denoting a file.
     /// @param acs Kind of operations allowed on the file.
@@ -442,10 +463,11 @@ class context
     }
 
   private:
-    static KORU_inline auto lock_or_empty() noexcept
+    template <bool Shared>
+    KORU_inline auto lock_or_empty() noexcept
     {
-        if constexpr (CS.atomic_ios)
-            return std::scoped_lock{last_.mtx};
+        if constexpr (AtomicIos)
+            return lock<Shared>{last_.srwl};
         else
             return empty{};
     }
@@ -455,7 +477,7 @@ class context
     void run()
     {
         auto sz = [&] {
-            const auto loe = lock_or_empty();
+            const auto loe = lock_or_empty<true>();
             return last_.sz;
         }();
 
@@ -466,11 +488,14 @@ class context
                 WAIT_OBJECT_0);
             if (h_idx > static_cast<unsigned>(sz)) {
                 detail::throw_last_winapi_error();
-            } else if (!CS.async_ios || h_idx != 0) {
+#pragma warning(push)
+#pragma warning(disable : 4127) /* conditional expression is constant */
+            } else if (!AsyncIos || h_idx != 0) {
+#pragma warning(pop)
                 // Dequeue and resume the corresponding coro
                 const auto ptr = [&] {
-                    const auto loe = lock_or_empty();
-                    if constexpr (CS.async_ios)
+                    const auto loe = lock_or_empty<false>();
+                    if constexpr (AsyncIos)
                         sz = --last_.sz;
                     else
                         last_.sz = --sz;
@@ -478,12 +503,12 @@ class context
                     return std::exchange(coros_[h_idx], coros_[sz]);
                 }();
 #if KORU_DEBUG
-                ptr();
+                ptr.resume();
 #else
                 std::coroutine_handle<>::from_address(ptr).resume();
 #endif
             }
-            const auto loe = lock_or_empty();
+            const auto loe = lock_or_empty<true>();
             sz             = last_.sz;
         }
     }
@@ -495,30 +520,29 @@ class context
     }
 
   private:
-    HANDLE evs_[nmax]{if_<!CS.async_ios>(nullptr, KORU_fref(CreateEventW),
-                                         nullptr, false, false, nullptr)};
+    HANDLE evs_[nmax]{if_<!AsyncIos>(nullptr, KORU_fref(CreateEventW), nullptr,
+                                     false, false, nullptr)};
     coro_ptr coros_[nmax];
 
     // These are for Natvis to be able to display event-coro pairings.
     static constexpr std::size_t off = sizeof(evs_);
-    static constexpr int init_sz     = CS.async_ios ? 1 : 0;
+    static constexpr int init_sz     = AsyncIos ? 1 : 0;
     struct item;
 
-    // "Tabkeeping". sz is volatile because run() would have UB otherwise.
-    struct size_and_mutex {
-        std::mutex mtx;
+    struct size_and_lock {
+        SRWLOCK srwl;
         volatile int sz = init_sz;
+        KORU_inline size_and_lock() noexcept { InitializeSRWLock(&srwl); }
     };
     struct size {
         volatile int sz = init_sz;
     };
-    std::conditional_t<CS.atomic_ios, size_and_mutex, size> last_;
+    std::conditional_t<AtomicIos, size_and_lock, size> last_;
 };
 
 } // namespace detail
 
 using detail::context;
-using detail::context_settings;
 using detail::sync_task;
 
 } // namespace koru

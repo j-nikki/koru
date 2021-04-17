@@ -1,9 +1,15 @@
+#include <charconv>
+#include <filesystem>
 #include <koru.h>
 
-koru::sync_task<void> write_hash(koru::context<> &ctx, const wchar_t *src,
-                                 const wchar_t *dst)
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest.h>
+
+using context = koru::context<true>;
+
+koru::sync_task<void> write_hash(context &ctx, const wchar_t *src,
+                                 const wchar_t *dst, std::size_t &h)
 {
-    std::size_t h;
     { // Calculate hash from contents of src
         printf("%S: init\n", src);
         auto f          = ctx.open(src);
@@ -14,30 +20,52 @@ koru::sync_task<void> write_hash(koru::context<> &ctx, const wchar_t *src,
         printf("%S: hash=%llu\n", src, h);
     }
     { // Write string representation of hash to dst
-        auto f = ctx.open(dst, koru::access::write);
-        char buf[32], *p = &buf[32];
-        for (; h; h /= 10)
-            *--p = '0' + static_cast<char>(h % 10);
-        co_await ctx.write(f.at(0), p,
-                           static_cast<DWORD>(std::distance(p, &buf[32])));
+        char buf[32];
+        auto sz = snprintf(buf, 32, "%zu", h);
+        auto f  = ctx.open(dst, koru::access::write);
+        co_await ctx.write(f.at(0), &buf[0], static_cast<DWORD>(sz));
         printf("%S: wrote hash to %S\n", src, dst);
     }
 }
 
-int main()
+koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
 {
-    wchar_t path[MAX_PATH];
-    GetCurrentDirectoryW(MAX_PATH, path);
-    try {
-        koru::context<> ctx;
-        auto f1 = write_hash(ctx, LR"(..\..\..\..\CMakeLists.txt)", L"h1.txt");
-        auto f2 = write_hash(ctx, LR"(..\..\..\..\.clang-format)", L"h2.txt");
+    auto f          = ctx.open(path);
+    auto sz         = GetFileSize(f.native_handle, nullptr);
+    auto buf        = std::make_unique_for_overwrite<char[]>(sz);
+    auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);
+    std::size_t res{};
+    if (auto [_, ec] = std::from_chars(buf.get(), buf.get() + bytes_read, res);
+        ec != std::errc{})
+        throw std::system_error{std::make_error_code(ec)};
+    co_return res;
+}
+
+TEST_CASE("expected file hashes get expectedly written")
+{
+    koru::context<true> ctx;
+    std::size_t h1_expected{}, h2_expected{};
+    auto f1 =
+        write_hash(ctx, LR"(..\..\CMakeLists.txt)", L"h1.txt", h1_expected);
+    auto f2 =
+        write_hash(ctx, LR"(..\..\.clang-format)", L"h2.txt", h2_expected);
+    ctx.run();
+    f1.get();
+    f2.get();
+
+    SUBCASE("file hashes exist on disk")
+    {
+        using std::filesystem::exists;
+        REQUIRE(exists("h1.txt"));
+        REQUIRE(exists("h2.txt"));
+    }
+
+    SUBCASE("file hashes are as expected")
+    {
+        auto h1_actual = read_hash(ctx, L"h1.txt");
+        auto h2_actual = read_hash(ctx, L"h2.txt");
         ctx.run();
-        f1.get();
-        f2.get();
-        return 0;
-    } catch (const std::exception &e) {
-        fprintf(stderr, "%s\n", e.what());
-        return 1;
+        REQUIRE_EQ(h1_actual.get(), h1_expected);
+        REQUIRE_EQ(h2_actual.get(), h2_expected);
     }
 }
