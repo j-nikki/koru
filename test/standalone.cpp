@@ -1,8 +1,8 @@
-#include <koru.h>
+//
+// Checks syntax, missing headers, etc.
+//
 
-//
-// Just syntax checking
-//
+#include <koru.h>
 
 koru::sync_task<void> foo()
 {

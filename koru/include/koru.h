@@ -336,7 +336,8 @@ class context
                               BufT buf, DWORD nbytes)
             : last_{c.last_}
         {
-            ol_.Pointer = std::bit_cast<PVOID>(offset);
+            ol_.Offset     = static_cast<uint32_t>(offset);
+            ol_.OffsetHigh = static_cast<uint32_t>(offset >> 32);
             ol_.hEvent =
                 detail::or_(c.evs_[c.last_.sz], KORU_fref(CreateEventW),
                             nullptr, false, false, nullptr);

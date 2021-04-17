@@ -5,7 +5,7 @@ In the 2008 book Concurrent Programming on Windows by Joe Duffy, different model
 
 On the account of aforementioned, it is evident that the approach opted for here does not scale, but well suffices in demonstrating yet another use case for C++20 coroutines.
 
-\*It is actually possible to wait on more than `MAXIMUM_WAIT_OBJECTS` handles, say, by creating `⌈N/MAXIMUM_WAIT_OBJECTS⌉` threads, where `N` is the number of handles to wait on, and each thread waits on up to `MAXIMUM_WAIT_OBJECTS` handles.
+\*It is technically possible to wait on more than `MAXIMUM_WAIT_OBJECTS` handles, say, by creating `⌈N/MAXIMUM_WAIT_OBJECTS⌉` threads, where `N` is the number of handles to wait on, and each thread waits on up to `MAXIMUM_WAIT_OBJECTS` handles.
 
 This is a work-in-progress project – the API is inchoate and subject to change.
 
@@ -13,8 +13,8 @@ This is a work-in-progress project – the API is inchoate and subject to change
 
 An abridgement of `write_hash` in `test/hash.cpp`:
 ```c++
-koru::sync_task<void> write_hash(koru::context<> &ctx, auto src, auto dst) {
-    std::size_t h;
+koru::sync_task<void> write_hash(auto &ctx, auto src, auto dst, auto &h)
+{
     { // Calculate hash from contents of src
         auto f          = ctx.open(src);
         auto sz         = GetFileSize(f.native_handle, nullptr);
@@ -23,12 +23,10 @@ koru::sync_task<void> write_hash(koru::context<> &ctx, auto src, auto dst) {
         h = std::hash<std::string_view>{}({buf.get(), bytes_read});
     }
     { // Write string representation of hash to dst
-        auto f = ctx.open(dst, koru::access::write);
-        char buf[32], *p = &buf[32];
-        for (; h; h /= 10)
-            *--p = '0' + static_cast<char>(h % 10);
-        co_await ctx.write(f.at(0), p,
-                           static_cast<DWORD>(std::distance(p, &buf[32])));
+        char buf[32];
+        auto sz = snprintf(buf, 32, "%zu", h);
+        auto f  = ctx.open(dst, koru::access::write);
+        co_await ctx.write(f.at(0), &buf[0], static_cast<DWORD>(sz));
     }
 }
 ```

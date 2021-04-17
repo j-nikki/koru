@@ -1,3 +1,7 @@
+//
+// Simple test case for file I/O
+//
+
 #include <charconv>
 #include <filesystem>
 #include <koru.h>
@@ -17,7 +21,7 @@ koru::sync_task<void> write_hash(context &ctx, const wchar_t *src,
         auto buf        = std::make_unique_for_overwrite<char[]>(sz);
         auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);
         h = std::hash<std::string_view>{}({buf.get(), bytes_read});
-        printf("%S: hash=%llu\n", src, h);
+        printf("%S: hash=%zu\n", src, h);
     }
     { // Write string representation of hash to dst
         char buf[32];
