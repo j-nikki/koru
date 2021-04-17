@@ -8,8 +8,10 @@
 #define NOMINMAX
 #endif
 
+#pragma warning(push, 3)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#pragma warning(pop)
 
 #include <coroutine>
 #include <exception>
@@ -53,7 +55,7 @@ namespace detail
                 fprintf(stderr, "%s\n", #Expr " != true");                     \
                 std::terminate();                                              \
             }                                                                  \
-    }(Expr)
+    }(static_cast<bool>(Expr))
 #else
 #define KORU_assert(Expr) __assume(Expr)
 #endif
@@ -110,6 +112,8 @@ class lock
   public:
     lock(const lock &) = delete;
     lock(lock &&)      = delete;
+    lock &operator=(const lock &) = delete;
+    lock &operator=(lock &&) = delete;
     KORU_inline lock(SRWLOCK &srwl) noexcept : srwl_{&srwl}
     {
         if constexpr (Shared)
@@ -147,24 +151,19 @@ class sync_pointer
     friend class sync_task;
 
     using ex_ptr = std::exception_ptr;
+    enum class status : unsigned char { noinit, value, error };
 
     template <class>
     struct storage {
         template <class>
         friend class sync_task;
         friend class sync_pointer;
-
-        KORU_inline storage()
-        {
-            KORU_dbg(std::fill_n(std::bit_cast<char *>(&buf),
-                                 sizeof(std::exception_ptr), 0xddi8));
-        }
-
         /// @brief Forms a reference to the coroutine result. Rethrows any stored exception.
         /// @return A reference to the object in storage.
         KORU_inline T &get()
         {
-            if (error)
+            KORU_assert(s == status::value || s == status::error);
+            if (s == status::error) [[unlikely]]
                 std::rethrow_exception(
                     static_cast<ex_ptr &&>(*std::bit_cast<ex_ptr *>(&buf)));
             // This differs from the move semantics of std::future::get.
@@ -172,14 +171,14 @@ class sync_pointer
         }
         ~storage()
         {
-            // TODO: error if exception is thrown before storee init
-            if (error)
-                std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
-            else
+            if (s == status::value) [[likely]]
                 std::bit_cast<T *>(&buf)->~T();
+            else [[unlikely]] if (s == status::error)
+                std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
         }
         std::aligned_union_t<1, ex_ptr, T> buf;
-        bool error;
+        status s = status::noinit;
+#pragma warning(suppress : 4820) /* padding added after data member */
     };
 
     template <>
@@ -187,21 +186,13 @@ class sync_pointer
         template <class>
         friend class sync_task;
         friend class sync_pointer;
-
-        KORU_inline storage()
-        {
-            KORU_dbg(std::fill_n(std::bit_cast<char *>(&buf),
-                                 sizeof(std::exception_ptr), 0xddi8));
-        }
-
         /// @brief Rethrows any stored exception.
         KORU_inline void get()
         {
-            if (auto &e = *std::bit_cast<ex_ptr *>(&buf))
-                std::rethrow_exception(static_cast<ex_ptr &&>(e));
+            if (ep) [[unlikely]]
+                std::rethrow_exception(static_cast<ex_ptr &&>(ep));
         }
-        ~storage() { std::bit_cast<ex_ptr *>(&buf)->~ex_ptr(); } // TODO ^
-        std::aligned_storage_t<sizeof(ex_ptr), alignof(ex_ptr)> buf;
+        ex_ptr ep{};
     };
 
   public:
@@ -211,9 +202,11 @@ class sync_pointer
 
     void unhandled_exception() noexcept
     {
-        new (&pstore->buf) std::exception_ptr{std::current_exception()};
-        if constexpr (!std::is_void_v<T>)
-            pstore->error = true;
+        if constexpr (!std::is_void_v<T>) {
+            new (&pstore->buf) std::exception_ptr{std::current_exception()};
+            pstore->s = status::error;
+        } else
+            pstore->ep = std::current_exception();
     }
 
   private:
@@ -228,47 +221,51 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
     using base = sync_pointer<T, sync_task<T>>;
     friend class base;
 
-    constexpr KORU_inline sync_task() noexcept {}
-    constexpr KORU_inline sync_task(base::template storage<T> *&pref) noexcept
+    [[nodiscard]] constexpr KORU_inline
+    sync_task(base::template storage<T> *&pref) noexcept
     {
         pref = this;
     }
 
   public:
-    sync_task(sync_task &&)      = delete;
+    sync_task()                  = delete;
     sync_task(const sync_task &) = delete;
+    sync_task(sync_task &&)      = delete;
+    sync_task &operator=(const sync_task &) = delete;
+    sync_task &operator=(sync_task &&) = delete;
 
     template <class>
     struct promise : base {
+        constexpr KORU_inline promise() noexcept {}
+        promise(const promise &) = delete;
+        promise(promise &&)      = delete;
+        promise &operator=(const promise &) = delete;
+        promise &operator=(promise &&) = delete;
         constexpr void return_value(T &&x) noexcept(
             std::is_nothrow_move_constructible_v<
                 T>) requires std::is_move_constructible_v<T>
         {
-            KORU_dbg(std::fill_n(std::bit_cast<char *>(&base::pstore->buf),
-                                 sizeof(std::exception_ptr), '\0'));
             new (&base::pstore->buf) T{static_cast<T &&>(x)};
-            base::pstore->error = false;
+            base::pstore->s = base::status::value;
         }
 
         constexpr void return_value(const T &x) noexcept(
             std::is_nothrow_copy_constructible_v<
                 T>) requires std::is_copy_constructible_v<T>
         {
-            KORU_dbg(std::fill_n(std::bit_cast<char *>(&base::pstore->buf),
-                                 sizeof(std::exception_ptr), '\0'));
             new (&base::pstore->buf) T{x};
-            base::pstore->error = false;
+            base::pstore->s = base::status::value;
         }
     };
 
     template <>
     struct promise<void> : base {
-        constexpr void return_void() noexcept
-        {
-            KORU_dbg(std::fill_n(std::bit_cast<char *>(&base::pstore->buf),
-                                 sizeof(std::exception_ptr), '\0'));
-            new (&base::pstore->buf) base::ex_ptr{};
-        }
+        constexpr KORU_inline promise() noexcept {}
+        promise(const promise &) = delete;
+        promise(promise &&)      = delete;
+        promise &operator=(const promise &) = delete;
+        promise &operator=(promise &&) = delete;
+        constexpr void return_void() noexcept {}
     };
 
     using promise_type = promise<T>;
@@ -304,15 +301,17 @@ class context
         friend class context;
 
         struct location {
-            const HANDLE handle;
-            const uint64_t offset;
+            HANDLE handle;
+            uint64_t offset;
         };
 
         constexpr file(HANDLE handle) noexcept : native_handle(handle) {}
 
       public:
-        file(file &&)      = delete;
         file(const file &) = delete;
+        file(file &&)      = delete;
+        file &operator=(const file &) = delete;
+        file &operator=(file &&) = delete;
         ~file() { CloseHandle(native_handle); }
 
         /// @brief A convenience function to facilitate specifying file-location info in read/write operations.
@@ -361,7 +360,8 @@ class context
       public:
         file_task(const file_task &) = delete;
         file_task(file_task &&)      = delete;
-        ~file_task() {}
+        file_task &operator=(const file_task &) = delete;
+        file_task &operator=(file_task &&) = delete;
 
         bool await_ready() const noexcept { return !last_.p; }
         auto await_resume() const noexcept
@@ -383,6 +383,10 @@ class context
         };
         struct ptr_and_lock : lock<false> {
             constexpr KORU_inline ptr_and_lock(auto &x) : lock<false>{x.srwl} {}
+            ptr_and_lock(const ptr_and_lock &) = delete;
+            ptr_and_lock(ptr_and_lock &&)      = delete;
+            ptr_and_lock &operator=(const ptr_and_lock &) = delete;
+            ptr_and_lock &operator=(ptr_and_lock &&) = delete;
             coro_ptr *p;
         };
         std::conditional_t<AtomicIos, ptr_and_lock, ptr> last_;
@@ -392,6 +396,8 @@ class context
     [[nodiscard]] context()  = default;
     context(const context &) = delete;
     context(context &&)      = delete;
+    context &operator=(const context &) = delete;
+    context &operator=(context &&) = delete;
 
     /// @brief Opens a file that can be operated on by *this.
     /// @param fname WinAPI-conformant path specifier denoting a file.
@@ -399,10 +405,11 @@ class context
     /// @return An object that represents the opened file.
     [[nodiscard]] file open(const wchar_t *fname, access acs = access::read)
     {
-        auto handle = CreateFileW(
+        const auto handle = CreateFileW(
             fname, static_cast<DWORD>(acs),
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-            acs == access::read ? OPEN_EXISTING : OPEN_ALWAYS,
+            static_cast<DWORD>(acs == access::read ? OPEN_EXISTING
+                                                   : OPEN_ALWAYS),
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
         if (handle == INVALID_HANDLE_VALUE)
             detail::throw_last_winapi_error();
@@ -489,10 +496,8 @@ class context
                 WAIT_OBJECT_0);
             if (h_idx > static_cast<unsigned>(sz)) {
                 detail::throw_last_winapi_error();
-#pragma warning(push)
-#pragma warning(disable : 4127) /* conditional expression is constant */
+#pragma warning(suppress : 4127) /* conditional expression is constant */
             } else if (!AsyncIos || h_idx != 0) {
-#pragma warning(pop)
                 // Dequeue and resume the corresponding coro
                 const auto ptr = [&] {
                     const auto loe = lock_or_empty<false>();
@@ -503,11 +508,7 @@ class context
                     std::swap(evs_[h_idx], evs_[sz]);
                     return std::exchange(coros_[h_idx], coros_[sz]);
                 }();
-#if KORU_DEBUG
-                ptr.resume();
-#else
-                std::coroutine_handle<>::from_address(ptr).resume();
-#endif
+                KORU_ndbg(std::coroutine_handle<>::from_address)(ptr).resume();
             }
             const auto loe = lock_or_empty<true>();
             sz             = last_.sz;
@@ -532,11 +533,16 @@ class context
 
     struct size_and_lock {
         SRWLOCK srwl;
-        volatile int sz = init_sz;
+        int sz = init_sz;
         KORU_inline size_and_lock() noexcept { InitializeSRWLock(&srwl); }
+        size_and_lock(const size_and_lock &) = delete;
+        size_and_lock(size_and_lock &&)      = delete;
+        size_and_lock &operator=(const size_and_lock &) = delete;
+        size_and_lock &operator=(size_and_lock &&) = delete;
+#pragma warning(suppress : 4820) /* padding added after data member */
     };
     struct size {
-        volatile int sz = init_sz;
+        int sz = init_sz;
     };
     std::conditional_t<AtomicIos, size_and_lock, size> last_;
 };

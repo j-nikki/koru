@@ -6,30 +6,36 @@
 #include <filesystem>
 #include <koru.h>
 
+#pragma warning(push, 3)
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
+#pragma warning(pop)
 
 using context = koru::context<true>;
+
+// TODO: figure out why these warnings happen
+#define warning_tempsuppress __pragma(warning(suppress : 4626 5027))
 
 koru::sync_task<void> write_hash(context &ctx, const wchar_t *src,
                                  const wchar_t *dst, std::size_t &h)
 {
-    { // Calculate hash from contents of src
-        printf("%S: init\n", src);
+    printf("%S: init\n", src);
+    {
         auto f          = ctx.open(src);
         auto sz         = GetFileSize(f.native_handle, nullptr);
         auto buf        = std::make_unique_for_overwrite<char[]>(sz);
         auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);
         h = std::hash<std::string_view>{}({buf.get(), bytes_read});
-        printf("%S: hash=%zu\n", src, h);
     }
-    { // Write string representation of hash to dst
+    printf("%S: hash=%zu\n", src, h);
+    {
         char buf[32];
         auto sz = snprintf(buf, 32, "%zu", h);
         auto f  = ctx.open(dst, koru::access::write);
         co_await ctx.write(f.at(0), &buf[0], static_cast<DWORD>(sz));
-        printf("%S: wrote hash to %S\n", src, dst);
     }
+    printf("%S: wrote hash to %S\n", src, dst);
+    warning_tempsuppress
 }
 
 koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
@@ -43,6 +49,7 @@ koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
         ec != std::errc{})
         throw std::system_error{std::make_error_code(ec)};
     co_return res;
+    warning_tempsuppress
 }
 
 TEST_CASE("expected file hashes get expectedly written")
@@ -64,7 +71,7 @@ TEST_CASE("expected file hashes get expectedly written")
         REQUIRE(exists("h2.txt"));
     }
 
-    SUBCASE("file hashes are as expected")
+    SUBCASE("on-disk file hashes are as expected")
     {
         auto h1_actual = read_hash(ctx, L"h1.txt");
         auto h2_actual = read_hash(ctx, L"h2.txt");

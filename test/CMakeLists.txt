@@ -25,7 +25,7 @@ foreach(ut IN LISTS UNIT_TESTS)
   add_executable(${target} EXCLUDE_FROM_ALL "${ut}")
   add_test(${target} ${target})
   target_link_libraries(${target} koru)
-  target_compile_options(${target} PRIVATE /WX /W4)
+  target_compile_options(${target} PRIVATE /WX /Wall)
   target_include_directories(${target} PUBLIC ${DOCTEST_INCLUDE_DIR})
   add_dependencies(koru-tests ${target})
 

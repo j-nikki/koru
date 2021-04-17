@@ -27,25 +27,19 @@
 	
 	<!--koru::sync_task-->
 	<Type Name="koru::detail::sync_task&lt;*&gt;">
-		<Intrinsic Name="noinit" Expression="*(int64_t*)&amp;buf==0xddddddddddddddddll &amp;&amp; (sizeof(std::exception_ptr)==8 || *((int64_t*)&amp;buf+1)==0xddddddddddddddddll)"/>
-		<DisplayString Condition="noinit()">{{ error=... value=... }}</DisplayString>
-		<DisplayString Condition="!noinit() &amp;&amp; error">{{ error=true value={*(std::exception_ptr*)&amp;buf} }}</DisplayString>
-		<DisplayString Condition="!noinit() &amp;&amp; !error">{{ error=false value={*($T1*)&amp;buf} }}</DisplayString>
+		<DisplayString Condition="s==0">{{ error=... value=... }}</DisplayString>
+		<DisplayString Condition="s==1">{{ error=false value={*($T1*)&amp;buf} }}</DisplayString>
+		<DisplayString Condition="s==2">{{ error=true value={*(std::exception_ptr*)&amp;buf} }}</DisplayString>
 		<Expand>
-			<Item Name="[error]" Condition="!noinit()">error</Item>
-			<Item Name="[value]" Condition="!noinit() &amp;&amp; !error">*($T1*)&amp;buf</Item>
-			<Item Name="[value]" Condition="!noinit() &amp;&amp; error">*(std::exception_ptr*)&amp;buf</Item>
+			<Item Name="[error]" Condition="s!=0">s==2</Item>
+			<Item Name="[value]" Condition="s==1">*($T1*)&amp;buf</Item>
+			<Item Name="[value]" Condition="s==2">*(std::exception_ptr*)&amp;buf</Item>
 		</Expand>
 	</Type>
 	<Type Name="koru::detail::sync_task&lt;void&gt;">
-		<Intrinsic Name="noinit" Expression="*(int64_t*)&amp;buf==0xddddddddddddddddll &amp;&amp; (sizeof(std::exception_ptr)==8 || *((int64_t*)&amp;buf+1)==0xddddddddddddddddll)"/>
-		<Intrinsic Name="error" Expression="*(int64_t*)&amp;buf || *((int64_t*)&amp;buf+1)"/>
-		<DisplayString Condition="noinit()">{{ error=... value=... }}</DisplayString>
-		<DisplayString Condition="!noinit() &amp;&amp; error()">{{ error=true value={*(std::exception_ptr*)&amp;buf} }}</DisplayString>
-		<DisplayString Condition="!noinit() &amp;&amp; !error()">{{ error=false }}</DisplayString>
+		<DisplayString>{{ ep={ep} }}</DisplayString>
 		<Expand>
-			<Item Name="[error]" Condition="!noinit()">error()</Item>
-			<Item Name="[value]" Condition="!noinit() &amp;&amp; error()">*(std::exception_ptr*)&amp;buf</Item>
+			<Item Name="[error ptr]">ep</Item>
 		</Expand>
 	</Type>
 	
