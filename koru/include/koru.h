@@ -301,8 +301,9 @@ class context
         friend class context;
 
         struct location {
-            HANDLE handle;
             uint64_t offset;
+            HANDLE handle;
+#pragma warning(suppress : 4820) /* padding added after data member */
         };
 
         constexpr file(HANDLE handle) noexcept : native_handle(handle) {}
@@ -319,7 +320,7 @@ class context
         /// @return The coupling of the file handle and given byte offset.
         [[nodiscard]] constexpr location at(uint64_t offset) const noexcept
         {
-            return {native_handle, offset};
+            return {offset, native_handle};
         }
 
         /// @brief This is the WinAPI handle representing the file.

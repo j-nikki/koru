@@ -52,17 +52,20 @@ koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
     warning_tempsuppress
 }
 
+std::size_t h1_expected{}, h2_expected{};
+koru::context<true> ctx;
+
 TEST_CASE("expected file hashes get expectedly written")
 {
-    koru::context<true> ctx;
-    std::size_t h1_expected{}, h2_expected{};
-    auto f1 =
-        write_hash(ctx, LR"(..\..\CMakeLists.txt)", L"h1.txt", h1_expected);
-    auto f2 =
-        write_hash(ctx, LR"(..\..\.clang-format)", L"h2.txt", h2_expected);
-    ctx.run();
-    f1.get();
-    f2.get();
+    if (!h1_expected || !h2_expected) {
+        auto f1 =
+            write_hash(ctx, LR"(..\..\CMakeLists.txt)", L"h1.txt", h1_expected);
+        auto f2 =
+            write_hash(ctx, LR"(..\..\.clang-format)", L"h2.txt", h2_expected);
+        ctx.run();
+        f1.get();
+        f2.get();
+    }
 
     SUBCASE("file hashes exist on disk")
     {
