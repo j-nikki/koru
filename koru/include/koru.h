@@ -520,6 +520,7 @@ class context
         int sz = init_sz;
     };
     std::conditional_t<AtomicIos, size_and_lock, size> last_;
+#pragma warning(suppress : 4820) /* padding added after data member */
 };
 
 } // namespace detail
