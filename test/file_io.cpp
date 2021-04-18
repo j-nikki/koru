@@ -59,10 +59,15 @@ auto init_test_case(auto &ctx)
 void for_each_ctx(auto f)
 {
     std::binary_semaphore s{0};
+    std::exception_ptr ep;
     std::thread t{[&] {
-        f(koru::context<false, false>{});
-        f(koru::context<true, false>{});
-        // f(koru::context<true, true>{}); // TODO: fix async setting
+        try {
+            f(koru::context<false, false>{});
+            f(koru::context<true, false>{});
+            // f(koru::context<true, true>{}); // TODO: fix async setting
+        } catch (...) {
+            ep = std::current_exception();
+        }
         s.release();
     }};
     if (!s.try_acquire_for(std::chrono::seconds{5})) {
@@ -75,6 +80,8 @@ void for_each_ctx(auto f)
         throw timeout_error{};
     }
     t.join();
+    if (ep)
+        std::rethrow_exception(ep);
 }
 
 TEST_CASE("expected file hashes get expectedly written")
