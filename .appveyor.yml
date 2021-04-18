@@ -7,20 +7,15 @@ platform:
 - x86
 - x64
 
-configuration:
-- Debug
-- Release
-
-before_build:
-- md build
-
 build_script:
+- md build
 - if %platform%==x86 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Preview\VC\Auxiliary\Build\vcvars32.bat"
 - if %platform%==x64 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Preview\VC\Auxiliary\Build\vcvars64.bat"
 - cmake -B build/%platform% -G Ninja
 
+# Configs don't participate in the matrix because that'd entail reduntant builds
 test_script:
-- cmake --build build/%platform% --target koru-tests --config %configuration%
+- cmake --build build/%platform% --target koru-tests --config Debug && cmake --build build/%platform% --target koru-tests --config Release
 
 matrix:
   fast_finish: true
