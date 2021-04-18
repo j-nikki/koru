@@ -5,21 +5,20 @@
 #include <charconv>
 #include <filesystem>
 #include <koru.h>
+#include <semaphore>
 
 #pragma warning(push, 3)
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
 #pragma warning(pop)
 
-using context = koru::context<true>;
-
 // TODO: figure out why these warnings happen
-#define warning_tempsuppress __pragma(warning(suppress : 4626 5027))
+#pragma warning(disable : 4626 5027)
 
-koru::sync_task<void> write_hash(context &ctx, const wchar_t *src,
-                                 const wchar_t *dst, std::size_t &h)
+koru::sync_task<std::size_t> write_hash(auto &ctx, const wchar_t *src,
+                                        const wchar_t *dst)
 {
-    printf("%S: init\n", src);
+    std::size_t h;
     {
         auto f          = ctx.open(src);
         auto sz         = GetFileSize(f.native_handle, nullptr);
@@ -27,18 +26,16 @@ koru::sync_task<void> write_hash(context &ctx, const wchar_t *src,
         auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);
         h = std::hash<std::string_view>{}({buf.get(), bytes_read});
     }
-    printf("%S: hash=%zu\n", src, h);
     {
         char buf[32];
         auto sz = snprintf(buf, 32, "%zu", h);
         auto f  = ctx.open(dst, koru::access::write);
         co_await ctx.write(f.at(0), &buf[0], static_cast<DWORD>(sz));
     }
-    printf("%S: wrote hash to %S\n", src, dst);
-    warning_tempsuppress
+    co_return h;
 }
 
-koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
+koru::sync_task<std::size_t> read_hash(auto &ctx, const wchar_t *path)
 {
     auto f          = ctx.open(path);
     auto sz         = GetFileSize(f.native_handle, nullptr);
@@ -49,37 +46,62 @@ koru::sync_task<std::size_t> read_hash(context &ctx, const wchar_t *path)
         ec != std::errc{})
         throw std::system_error{std::make_error_code(ec)};
     co_return res;
-    warning_tempsuppress
 }
 
-std::size_t h1_expected{}, h2_expected{};
-koru::context<true> ctx;
+auto init_test_case(auto &ctx)
+{
+    auto f1 = write_hash(ctx, LR"(..\..\..\CMakeLists.txt)", L"h1.txt");
+    auto f2 = write_hash(ctx, LR"(..\..\..\.clang-format)", L"h2.txt");
+    ctx.run();
+    return std::pair{f1.get(), f2.get()};
+}
+
+void for_each_ctx(auto f)
+{
+    std::binary_semaphore s{0};
+    std::thread t{[&] {
+        f(koru::context<false, false>{});
+        f(koru::context<true, false>{});
+        // f(koru::context<true, true>{}); // TODO: fix async setting
+        s.release();
+    }};
+    if (!s.try_acquire_for(std::chrono::seconds{5})) {
+        TerminateThread(t.native_handle(), 0);
+        t.detach();
+        struct timeout_error : std::exception {
+            using std::exception::exception;
+            const char *what() const noexcept { return "for_each_ctx timeout"; }
+        };
+        throw timeout_error{};
+    }
+    t.join();
+}
 
 TEST_CASE("expected file hashes get expectedly written")
 {
-    if (!h1_expected || !h2_expected) {
-        auto f1 =
-            write_hash(ctx, LR"(..\..\CMakeLists.txt)", L"h1.txt", h1_expected);
-        auto f2 =
-            write_hash(ctx, LR"(..\..\.clang-format)", L"h2.txt", h2_expected);
-        ctx.run();
-        f1.get();
-        f2.get();
-    }
-
     SUBCASE("file hashes exist on disk")
     {
-        using std::filesystem::exists;
-        REQUIRE(exists("h1.txt"));
-        REQUIRE(exists("h2.txt"));
+        for_each_ctx([](auto ctx) {
+            init_test_case(ctx);
+            REQUIRE(std::filesystem::exists("h1.txt"));
+            REQUIRE(std::filesystem::exists("h2.txt"));
+            std::filesystem::remove("h1.txt");
+            std::filesystem::remove("h2.txt");
+        });
     }
 
     SUBCASE("on-disk file hashes are as expected")
     {
-        auto h1_actual = read_hash(ctx, L"h1.txt");
-        auto h2_actual = read_hash(ctx, L"h2.txt");
-        ctx.run();
-        REQUIRE_EQ(h1_actual.get(), h1_expected);
-        REQUIRE_EQ(h2_actual.get(), h2_expected);
+        for_each_ctx([](auto ctx) {
+            init_test_case(ctx);
+            auto [h1_expected, h2_expected] = init_test_case(ctx);
+            auto h1_actual                  = read_hash(ctx, L"h1.txt");
+            auto h2_actual                  = read_hash(ctx, L"h2.txt");
+            ctx.run();
+            REQUIRE_EQ(h1_actual.get(), h1_expected);
+            REQUIRE_EQ(h2_actual.get(), h2_expected);
+            std::filesystem::remove("h1.txt");
+            std::filesystem::remove("h2.txt");
+        });
     }
 }

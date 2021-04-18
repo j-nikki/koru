@@ -79,6 +79,12 @@ namespace detail
         return F(static_cast<KORU_fref_args &&>(args)...);                     \
     }
 
+#define KORU_defctor(Cls, ...)                                                 \
+    Cls() __VA_ARGS__ Cls(const Cls &) = delete;                               \
+    Cls(Cls &&)                        = delete;                               \
+    Cls &operator=(const Cls &) = delete;                                      \
+    Cls &operator=(Cls &&) = delete
+
 [[noreturn]] void throw_last_winapi_error();
 
 template <class T, class F, class... Args>
@@ -110,10 +116,7 @@ template <bool Shared>
 class lock
 {
   public:
-    lock(const lock &) = delete;
-    lock(lock &&)      = delete;
-    lock &operator=(const lock &) = delete;
-    lock &operator=(lock &&) = delete;
+    KORU_defctor(lock, = delete;);
     KORU_inline lock(SRWLOCK &srwl) noexcept : srwl_{&srwl}
     {
         if constexpr (Shared)
@@ -138,6 +141,34 @@ class lock
 
   private:
     SRWLOCK *srwl_;
+};
+
+class file
+{
+    template <bool, bool, std::size_t>
+    friend class context;
+
+    struct location {
+        uint64_t offset;
+        HANDLE handle;
+#pragma warning(suppress : 4820) /* padding added after data member */
+    };
+
+    constexpr file(HANDLE handle) noexcept : native_handle(handle) {}
+
+  public:
+    KORU_defctor(file, = delete;);
+
+    /// @brief A convenience function to facilitate specifying file-location info in read/write operations.
+    /// @param offset A byte offset into *this.
+    /// @return The coupling of the file handle and given byte offset.
+    [[nodiscard]] constexpr location at(uint64_t offset) const noexcept
+    {
+        return {offset, native_handle};
+    }
+
+    /// @brief This is the WinAPI handle representing the file.
+    const HANDLE native_handle;
 };
 
 //
@@ -228,19 +259,10 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
     }
 
   public:
-    sync_task()                  = delete;
-    sync_task(const sync_task &) = delete;
-    sync_task(sync_task &&)      = delete;
-    sync_task &operator=(const sync_task &) = delete;
-    sync_task &operator=(sync_task &&) = delete;
+    KORU_defctor(sync_task, = delete;);
 
     template <class>
     struct promise : base {
-        constexpr KORU_inline promise() noexcept {}
-        promise(const promise &) = delete;
-        promise(promise &&)      = delete;
-        promise &operator=(const promise &) = delete;
-        promise &operator=(promise &&) = delete;
         constexpr void return_value(T &&x) noexcept(
             std::is_nothrow_move_constructible_v<
                 T>) requires std::is_move_constructible_v<T>
@@ -260,11 +282,6 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
 
     template <>
     struct promise<void> : base {
-        constexpr KORU_inline promise() noexcept {}
-        promise(const promise &) = delete;
-        promise(promise &&)      = delete;
-        promise &operator=(const promise &) = delete;
-        promise &operator=(promise &&) = delete;
         constexpr void return_void() noexcept {}
     };
 
@@ -295,37 +312,6 @@ class context
     // the current suspension point (added in VS19 version 16.10 Preview 2).
     using coro_ptr =
         std::conditional_t<KORU_DEBUG, std::coroutine_handle<>, void *>;
-
-    class file
-    {
-        friend class context;
-
-        struct location {
-            uint64_t offset;
-            HANDLE handle;
-#pragma warning(suppress : 4820) /* padding added after data member */
-        };
-
-        constexpr file(HANDLE handle) noexcept : native_handle(handle) {}
-
-      public:
-        file(const file &) = delete;
-        file(file &&)      = delete;
-        file &operator=(const file &) = delete;
-        file &operator=(file &&) = delete;
-        ~file() { CloseHandle(native_handle); }
-
-        /// @brief A convenience function to facilitate specifying file-location info in read/write operations.
-        /// @param offset A byte offset into *this.
-        /// @return The coupling of the file handle and given byte offset.
-        [[nodiscard]] constexpr location at(uint64_t offset) const noexcept
-        {
-            return {offset, native_handle};
-        }
-
-        /// @brief This is the WinAPI handle representing the file.
-        const HANDLE native_handle;
-    };
 
     class file_task
     {
@@ -359,10 +345,7 @@ class context
         }
 
       public:
-        file_task(const file_task &) = delete;
-        file_task(file_task &&)      = delete;
-        file_task &operator=(const file_task &) = delete;
-        file_task &operator=(file_task &&) = delete;
+        KORU_defctor(file_task, = delete;);
 
         bool await_ready() const noexcept { return !last_.p; }
         auto await_resume() const noexcept
@@ -380,25 +363,19 @@ class context
         OVERLAPPED ol_;
         struct ptr {
             constexpr KORU_inline ptr(const auto &) {}
+            KORU_defctor(ptr, = delete;);
             coro_ptr *p;
         };
         struct ptr_and_lock : lock<false> {
             constexpr KORU_inline ptr_and_lock(auto &x) : lock<false>{x.srwl} {}
-            ptr_and_lock(const ptr_and_lock &) = delete;
-            ptr_and_lock(ptr_and_lock &&)      = delete;
-            ptr_and_lock &operator=(const ptr_and_lock &) = delete;
-            ptr_and_lock &operator=(ptr_and_lock &&) = delete;
+            KORU_defctor(ptr_and_lock, = delete;);
             coro_ptr *p;
         };
         std::conditional_t<AtomicIos, ptr_and_lock, ptr> last_;
     };
 
   public:
-    [[nodiscard]] context()  = default;
-    context(const context &) = delete;
-    context(context &&)      = delete;
-    context &operator=(const context &) = delete;
-    context &operator=(context &&) = delete;
+    [[nodiscard]] KORU_defctor(context, = default;);
 
     /// @brief Opens a file that can be operated on by *this.
     /// @param fname WinAPI-conformant path specifier denoting a file.
@@ -535,11 +512,8 @@ class context
     struct size_and_lock {
         SRWLOCK srwl;
         int sz = init_sz;
-        KORU_inline size_and_lock() noexcept { InitializeSRWLock(&srwl); }
-        size_and_lock(const size_and_lock &) = delete;
-        size_and_lock(size_and_lock &&)      = delete;
-        size_and_lock &operator=(const size_and_lock &) = delete;
-        size_and_lock &operator=(size_and_lock &&) = delete;
+        KORU_inline KORU_defctor(
+            size_and_lock, noexcept { InitializeSRWLock(&srwl); });
 #pragma warning(suppress : 4820) /* padding added after data member */
     };
     struct size {
