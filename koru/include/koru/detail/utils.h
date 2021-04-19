@@ -26,13 +26,13 @@ namespace koru::detail
 #if KORU_DEBUG
 #define KORU_assert(Expr)                                                      \
     [](bool e) {                                                               \
-        if (std::is_constant_evaluated())                                      \
+        if (std::is_constant_evaluated()) {                                    \
             if (!e)                                                            \
                 throw std::runtime_error{#Expr " != true"};                    \
-            else if (!e) {                                                     \
-                fprintf(stderr, "%s\n", #Expr " != true");                     \
-                std::terminate();                                              \
-            }                                                                  \
+        } else if (!e) {                                                       \
+            fprintf(stderr, "(%s) != true\n", #Expr);                          \
+            std::terminate();                                                  \
+        }                                                                      \
     }(static_cast<bool>(Expr))
 #else
 #define KORU_assert(Expr) __assume(Expr)

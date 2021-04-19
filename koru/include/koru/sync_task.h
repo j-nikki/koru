@@ -6,6 +6,7 @@ namespace koru
 {
 namespace detail
 {
+
 //
 // SYNCHRONOUS TASK : Coroutine assuming coöperative multitasking
 //
@@ -28,6 +29,7 @@ class sync_pointer
         /// @return A reference to the object in storage.
         KORU_inline T &get()
         {
+            KORU_assert(!ch);
             KORU_assert(s == status::value || s == status::error);
             if (s == status::error) [[unlikely]]
                 std::rethrow_exception(
@@ -44,7 +46,7 @@ class sync_pointer
                 std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
         }
         std::aligned_union_t<1, ex_ptr, T> buf;
-        std::coroutine_handle<> awaiter_{};
+        std::coroutine_handle<> ch{};
         status s = status::noinit;
 #pragma warning(suppress : 4820) /* padding added after data member */
     };
@@ -57,18 +59,35 @@ class sync_pointer
         /// @brief Rethrows any stored exception.
         KORU_inline void get()
         {
+            KORU_assert(!ch);
             if (ep) [[unlikely]]
                 std::rethrow_exception(static_cast<ex_ptr &&>(ep));
         }
         void await_resume() { storage::get(); }
         ex_ptr ep{};
-        std::coroutine_handle<> awaiter_{};
+        std::coroutine_handle<> ch{};
     };
 
   public:
     constexpr Task get_return_object() noexcept { return {pstore}; }
     constexpr std::suspend_never initial_suspend() const noexcept { return {}; }
-    constexpr std::suspend_never final_suspend() const noexcept { return {}; }
+    constexpr auto final_suspend() const noexcept
+    {
+        struct R : std::suspend_always {
+            storage<T> &store;
+            R(storage<T> *pstore) : store{*pstore} {}
+            KORU_defctor(R, = delete;);
+            bool await_suspend(std::coroutine_handle<>) noexcept
+            {
+                if (store.ch) { // Resume awaiter
+                    store.ch.resume();
+                    KORU_dbg(store.ch = {});
+                }
+                return false;
+            }
+        };
+        return R{pstore};
+    }
 
     void unhandled_exception() noexcept
     {
@@ -101,12 +120,11 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
   public:
     KORU_defctor(sync_task, = delete;);
 
-    constexpr bool await_ready() noexcept { return false; }
-    constexpr void await_suspend(std::coroutine_handle<> h)
+    constexpr bool await_ready() noexcept
     {
-        KORU_assert(!storage::awaiter_);
-        storage::awaiter_ = h;
+        return storage::s != base::status::noinit;
     }
+    constexpr void await_suspend(std::coroutine_handle<> h) { storage::ch = h; }
 
     template <class>
     struct promise : base {
@@ -116,8 +134,6 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
         {
             new (&base::pstore->buf) T{static_cast<T &&>(x)};
             base::pstore->s = base::status::value;
-            if (base::pstore->awaiter_)
-                base::pstore->awaiter_.resume();
         }
 
         constexpr void return_value(const T &x) noexcept(
@@ -126,18 +142,12 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
         {
             new (&base::pstore->buf) T{x};
             base::pstore->s = base::status::value;
-            if (base::pstore->awaiter_)
-                base::pstore->awaiter_.resume();
         }
     };
 
     template <>
     struct promise<void> : base {
-        constexpr void return_void() noexcept
-        {
-            if (base::pstore->awaiter_)
-                base::pstore->awaiter_.resume();
-        }
+        constexpr void return_void() noexcept {}
     };
 
     using promise_type = promise<T>;
