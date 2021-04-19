@@ -307,6 +307,7 @@ class context
                   "MaxIos is too big");
 
     static constexpr std::size_t nmax = AsyncIos ? MaxIos + 1 : MaxIos;
+    static constexpr int init_sz      = AsyncIos ? 1 : 0;
 
     // Make Natvis show the original coroutine function name and signature and
     // the current suspension point (added in VS19 version 16.10 Preview 2).
@@ -324,9 +325,8 @@ class context
         {
             ol_.Offset     = static_cast<uint32_t>(offset);
             ol_.OffsetHigh = static_cast<uint32_t>(offset >> 32);
-            ol_.hEvent =
-                detail::or_(c.evs_[c.last_.sz], KORU_fref(CreateEventW),
-                            nullptr, false, false, nullptr);
+            ol_.hEvent     = or_(c.evs_[c.last_.sz], KORU_fref(CreateEventW),
+                             nullptr, false, false, nullptr);
 
             if (op(hfile, buf, nbytes, nullptr, &ol_)) {
                 // I/O completed synchronously (e.g., cache hit)
@@ -335,7 +335,7 @@ class context
                     last_.unlock();
             } else if (GetLastError() != ERROR_IO_PENDING) {
                 // Error occurred
-                detail::throw_last_winapi_error();
+                throw_last_winapi_error();
             } else {
                 // Async I/O initiated successfully
                 last_.p = &c.coros_[c.last_.sz++];
@@ -390,7 +390,7 @@ class context
                                                    : OPEN_ALWAYS),
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
         if (handle == INVALID_HANDLE_VALUE)
-            detail::throw_last_winapi_error();
+            throw_last_winapi_error();
         return {handle};
     }
 
@@ -467,13 +467,13 @@ class context
             return last_.sz;
         }();
 
-        while (sz) {
+        while (sz != init_sz) {
             const auto h_idx = static_cast<unsigned>(
                 WaitForMultipleObjects(static_cast<DWORD>(sz), evs_, false,
                                        INFINITE) -
                 WAIT_OBJECT_0);
             if (h_idx > static_cast<unsigned>(sz)) {
-                detail::throw_last_winapi_error();
+                throw_last_winapi_error();
 #pragma warning(suppress : 4127) /* conditional expression is constant */
             } else if (!AsyncIos || h_idx != 0) {
                 // Dequeue and resume the corresponding coro
@@ -506,7 +506,6 @@ class context
 
     // These are for Natvis to be able to display event-coro pairings.
     static constexpr std::size_t off = sizeof(evs_);
-    static constexpr int init_sz     = AsyncIos ? 1 : 0;
     struct item;
 
     struct size_and_lock {
@@ -526,6 +525,7 @@ class context
 } // namespace detail
 
 using detail::context;
+using detail::file;
 using detail::sync_task;
 
 } // namespace koru

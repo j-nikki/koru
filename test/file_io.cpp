@@ -64,7 +64,7 @@ void for_each_ctx(auto f)
         try {
             f(koru::context<false, false>{});
             f(koru::context<true, false>{});
-            // f(koru::context<true, true>{}); // TODO: fix async setting
+            f(koru::context<true, true>{});
         } catch (...) {
             ep = std::current_exception();
         }
@@ -74,7 +74,6 @@ void for_each_ctx(auto f)
         TerminateThread(t.native_handle(), 0);
         t.detach();
         struct timeout_error : std::exception {
-            using std::exception::exception;
             const char *what() const noexcept { return "for_each_ctx timeout"; }
         };
         throw timeout_error{};
