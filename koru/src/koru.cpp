@@ -1,4 +1,4 @@
-﻿#include "../include/koru/context.h"
+﻿#include "../include/koru/all.h"
 
 #if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
 #define _WIN32_WINNT 0x0600 /* minimum for SRWLs */

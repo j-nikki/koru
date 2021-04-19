@@ -1,7 +1,7 @@
 ﻿#pragma once
 
+#include "detail/utils.h"
 #include "detail/winapi.h"
-
 #include <coroutine>
 #include <exception>
 #include <mutex>
@@ -11,122 +11,8 @@
 
 namespace koru
 {
-
 namespace detail
 {
-#ifndef KORU_DEBUG
-#ifdef NDEBUG
-#define KORU_DEBUG 0
-#else
-#define KORU_DEBUG 1
-#endif
-#endif
-
-#if KORU_DEBUG
-#define KORU_dbg(...) __VA_ARGS__
-#define KORU_ndbg(...)
-#else
-#define KORU_dbg(...)
-#define KORU_ndbg(...) __VA_ARGS__
-#endif
-
-#if KORU_DEBUG
-#define KORU_assert(Expr)                                                      \
-    [](bool e) {                                                               \
-        if (std::is_constant_evaluated())                                      \
-            if (!e)                                                            \
-                throw std::runtime_error{#Expr " != true"};                    \
-            else if (!e) {                                                     \
-                fprintf(stderr, "%s\n", #Expr " != true");                     \
-                std::terminate();                                              \
-            }                                                                  \
-    }(static_cast<bool>(Expr))
-#else
-#define KORU_assert(Expr) __assume(Expr)
-#endif
-
-#define KORU_concat(A, B) KORU_concat_exp(A, B)
-#define KORU_concat_exp(A, B) A##B
-
-// Used when it is an error in the design for the inlining not to take place.
-#define KORU_inline inline __forceinline
-
-#define KORU_fref_args KORU_concat(FrefArgs, __LINE__)
-#define KORU_fref(F)                                                           \
-    []<class... KORU_fref_args>(KORU_fref_args && ...args) noexcept(           \
-        noexcept(F(static_cast<KORU_fref_args &&>(args)...)))                  \
-        ->decltype(                                                            \
-            F(static_cast<KORU_fref_args &&>(args)...)) requires requires      \
-    {                                                                          \
-        F(static_cast<KORU_fref_args &&>(args)...);                            \
-    }                                                                          \
-    {                                                                          \
-        return F(static_cast<KORU_fref_args &&>(args)...);                     \
-    }
-
-#define KORU_defctor(Cls, ...)                                                 \
-    Cls() __VA_ARGS__ Cls(const Cls &) = delete;                               \
-    Cls(Cls &&)                        = delete;                               \
-    Cls &operator=(const Cls &) = delete;                                      \
-    Cls &operator=(Cls &&) = delete
-
-[[noreturn]] void throw_last_winapi_error();
-
-template <class T, class F, class... Args>
-constexpr KORU_inline T &or_(T &val, F &&f, Args &&...args) noexcept(
-    noexcept(static_cast<F &&>(f)(static_cast<Args>(args)...)))
-{
-    if (!val)
-        val = static_cast<F &&>(f)(static_cast<Args>(args)...);
-    return val;
-};
-
-template <bool Test, class T, class F, class... Args>
-constexpr KORU_inline auto
-if_([[maybe_unused]] T &&x, F &&f, Args &&...args) noexcept(
-    noexcept(static_cast<F &&>(f)(static_cast<Args>(args)...)))
-    -> std::conditional_t<
-        Test, T, decltype(static_cast<F &&>(f)(static_cast<Args>(args)...))>
-{
-    if constexpr (Test)
-        return static_cast<T &&>(x);
-    else
-        return static_cast<F &&>(f)(static_cast<Args>(args)...);
-};
-
-struct empty {
-};
-
-template <bool Shared>
-class lock
-{
-  public:
-    KORU_defctor(lock, = delete;);
-    KORU_inline lock(SRWLOCK &srwl) noexcept : srwl_{&srwl}
-    {
-        if constexpr (Shared)
-            AcquireSRWLockShared(&srwl);
-        else
-            AcquireSRWLockExclusive(&srwl);
-    }
-    ~lock()
-    {
-        if (srwl_)
-            unlock();
-    }
-    KORU_inline void unlock() noexcept
-    {
-        KORU_assert(srwl_);
-        if constexpr (Shared)
-            ReleaseSRWLockShared(srwl_);
-        else
-            ReleaseSRWLockExclusive(srwl_);
-        srwl_ = nullptr;
-    }
-
-  private:
-    SRWLOCK *srwl_;
-};
 
 enum class access : DWORD {
     read       = GENERIC_READ,
@@ -160,123 +46,6 @@ class file
 
     /// @brief This is the WinAPI handle representing the file.
     const HANDLE native_handle;
-};
-
-//
-// SYNCHRONOUS TASK : Coroutine assuming coöperative multitasking
-//
-
-template <class T, class Task>
-class sync_pointer
-{
-    template <class>
-    friend class sync_task;
-
-    using ex_ptr = std::exception_ptr;
-    enum class status : unsigned char { noinit, value, error };
-
-    template <class>
-    struct storage {
-        template <class>
-        friend class sync_task;
-        friend class sync_pointer;
-        /// @brief Forms a reference to the coroutine result. Rethrows any stored exception.
-        /// @return A reference to the object in storage.
-        KORU_inline T &get()
-        {
-            KORU_assert(s == status::value || s == status::error);
-            if (s == status::error) [[unlikely]]
-                std::rethrow_exception(
-                    static_cast<ex_ptr &&>(*std::bit_cast<ex_ptr *>(&buf)));
-            // This differs from the move semantics of std::future::get.
-            return *std::bit_cast<T *>(&buf);
-        }
-        ~storage()
-        {
-            if (s == status::value) [[likely]]
-                std::bit_cast<T *>(&buf)->~T();
-            else [[unlikely]] if (s == status::error)
-                std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
-        }
-        std::aligned_union_t<1, ex_ptr, T> buf;
-        status s = status::noinit;
-#pragma warning(suppress : 4820) /* padding added after data member */
-    };
-
-    template <>
-    struct storage<void> {
-        template <class>
-        friend class sync_task;
-        friend class sync_pointer;
-        /// @brief Rethrows any stored exception.
-        KORU_inline void get()
-        {
-            if (ep) [[unlikely]]
-                std::rethrow_exception(static_cast<ex_ptr &&>(ep));
-        }
-        ex_ptr ep{};
-    };
-
-  public:
-    constexpr Task get_return_object() noexcept { return {pstore}; }
-    constexpr std::suspend_never initial_suspend() const noexcept { return {}; }
-    constexpr std::suspend_never final_suspend() const noexcept { return {}; }
-
-    void unhandled_exception() noexcept
-    {
-        if constexpr (!std::is_void_v<T>) {
-            new (&pstore->buf) std::exception_ptr{std::current_exception()};
-            pstore->s = status::error;
-        } else
-            pstore->ep = std::current_exception();
-    }
-
-  private:
-    storage<T> *pstore;
-};
-
-/// @brief Models a synchronously performed task (e.g., no race conditions can occur in the accessing of this object).
-/// @tparam T The type of object returned from the coroutine.
-template <class T>
-class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
-{
-    using base = sync_pointer<T, sync_task<T>>;
-    friend class base;
-
-    [[nodiscard]] constexpr KORU_inline
-    sync_task(base::template storage<T> *&pref) noexcept
-    {
-        pref = this;
-    }
-
-  public:
-    KORU_defctor(sync_task, = delete;);
-
-    template <class>
-    struct promise : base {
-        constexpr void return_value(T &&x) noexcept(
-            std::is_nothrow_move_constructible_v<
-                T>) requires std::is_move_constructible_v<T>
-        {
-            new (&base::pstore->buf) T{static_cast<T &&>(x)};
-            base::pstore->s = base::status::value;
-        }
-
-        constexpr void return_value(const T &x) noexcept(
-            std::is_nothrow_copy_constructible_v<
-                T>) requires std::is_copy_constructible_v<T>
-        {
-            new (&base::pstore->buf) T{x};
-            base::pstore->s = base::status::value;
-        }
-    };
-
-    template <>
-    struct promise<void> : base {
-        constexpr void return_void() noexcept {}
-    };
-
-    using promise_type = promise<T>;
 };
 
 //
@@ -518,7 +287,6 @@ class context
 using detail::access;
 using detail::context;
 using detail::file;
-using detail::sync_task;
 
 } // namespace koru
 

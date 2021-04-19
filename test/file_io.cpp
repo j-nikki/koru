@@ -4,7 +4,7 @@
 
 #include <charconv>
 #include <filesystem>
-#include <koru/context.h>
+#include <koru/all.h>
 #include <semaphore>
 
 #pragma warning(push, 3)

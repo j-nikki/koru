@@ -2,7 +2,9 @@
 // Checks syntax, missing headers, etc.
 //
 
-#include <koru.h>
+#include <koru/all.h>
+
+#include <koru/detail/win_macros_begin.inl>
 
 koru::sync_task<void> foo()
 {
@@ -28,3 +30,5 @@ int main()
     }
     (std::make_index_sequence<MAXIMUM_WAIT_OBJECTS>{});
 }
+
+#include <koru/detail/win_macros_end.inl>
