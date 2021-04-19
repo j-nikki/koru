@@ -35,6 +35,7 @@ class sync_pointer
             // This differs from the move semantics of std::future::get.
             return *std::bit_cast<T *>(&buf);
         }
+        T &await_resume() { return storage::get(); }
         ~storage()
         {
             if (s == status::value) [[likely]]
@@ -43,6 +44,7 @@ class sync_pointer
                 std::bit_cast<ex_ptr *>(&buf)->~ex_ptr();
         }
         std::aligned_union_t<1, ex_ptr, T> buf;
+        std::coroutine_handle<> awaiter_{};
         status s = status::noinit;
 #pragma warning(suppress : 4820) /* padding added after data member */
     };
@@ -58,7 +60,9 @@ class sync_pointer
             if (ep) [[unlikely]]
                 std::rethrow_exception(static_cast<ex_ptr &&>(ep));
         }
+        void await_resume() { storage::get(); }
         ex_ptr ep{};
+        std::coroutine_handle<> awaiter_{};
     };
 
   public:
@@ -84,7 +88,8 @@ class sync_pointer
 template <class T>
 class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
 {
-    using base = sync_pointer<T, sync_task<T>>;
+    using base    = sync_pointer<T, sync_task<T>>;
+    using storage = base::template storage<T>;
     friend class base;
 
     [[nodiscard]] constexpr KORU_inline
@@ -96,6 +101,13 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
   public:
     KORU_defctor(sync_task, = delete;);
 
+    constexpr bool await_ready() noexcept { return false; }
+    constexpr void await_suspend(std::coroutine_handle<> h)
+    {
+        KORU_assert(!storage::awaiter_);
+        storage::awaiter_ = h;
+    }
+
     template <class>
     struct promise : base {
         constexpr void return_value(T &&x) noexcept(
@@ -104,6 +116,8 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
         {
             new (&base::pstore->buf) T{static_cast<T &&>(x)};
             base::pstore->s = base::status::value;
+            if (base::pstore->awaiter_)
+                base::pstore->awaiter_.resume();
         }
 
         constexpr void return_value(const T &x) noexcept(
@@ -112,12 +126,18 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
         {
             new (&base::pstore->buf) T{x};
             base::pstore->s = base::status::value;
+            if (base::pstore->awaiter_)
+                base::pstore->awaiter_.resume();
         }
     };
 
     template <>
     struct promise<void> : base {
-        constexpr void return_void() noexcept {}
+        constexpr void return_void() noexcept
+        {
+            if (base::pstore->awaiter_)
+                base::pstore->awaiter_.resume();
+        }
     };
 
     using promise_type = promise<T>;

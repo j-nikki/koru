@@ -10,7 +10,7 @@ namespace detail
 {
 
 //
-// FILE: A kernel object closeable with CloseHandle()
+// FILE : A kernel object closeable with CloseHandle()
 //
 
 enum class access : DWORD {

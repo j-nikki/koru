@@ -5,6 +5,10 @@
 namespace koru::detail
 {
 
+//
+// Following forward-declares the subset of WinAPI used by Koru
+//
+
 // Finding used WinAPI names (fallible; think comments within string literals):
 /// set(m[0] for m in re.finditer(r'//.*|/\*.*?\*/|\b([A-Z][A-Za-z0-9]+|[A-Z][A-Z_]+)\b',pyperclip.paste()) if m[1])
 
