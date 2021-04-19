@@ -36,7 +36,7 @@ koru::sync_task<void> write_hash(auto &ctx, auto src, auto dst)
 
 Please see `LICENSE` for terms and conditions of use.
 
-The easiest way to use Koru in your project is to include it as a submodule: `git submodule add git@github.com:j-nikki/koru.git`. Now discover Koru in your CMake file (so you can `#include <koru.h>` in C++):
+The easiest way to use Koru in your project is to include it as a submodule: `git submodule add git@github.com:j-nikki/koru.git`. Now discover Koru in your CMake file (so you can `#include <koru/...>` in C++):
 ```cmake
 add_subdirectory("koru")
 target_link_libraries(<target-name> ... koru)

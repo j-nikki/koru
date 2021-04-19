@@ -1,31 +1,16 @@
 ﻿#pragma once
 
-#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0600
-#define _WIN32_WINNT 0x0600 /* minimum for SRWLs */
-#endif
-
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
-#pragma warning(push, 3)
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#pragma warning(pop)
+#include "detail/winapi.h"
 
 #include <coroutine>
 #include <exception>
 #include <mutex>
 #include <type_traits>
 
+#include "detail/win_macros_begin.inl"
+
 namespace koru
 {
-
-enum class access : DWORD {
-    read       = GENERIC_READ,
-    write      = GENERIC_WRITE,
-    read_write = GENERIC_READ | GENERIC_WRITE
-};
 
 namespace detail
 {
@@ -141,6 +126,12 @@ class lock
 
   private:
     SRWLOCK *srwl_;
+};
+
+enum class access : DWORD {
+    read       = GENERIC_READ,
+    write      = GENERIC_WRITE,
+    read_write = GENERIC_READ | GENERIC_WRITE
 };
 
 class file
@@ -524,8 +515,11 @@ class context
 
 } // namespace detail
 
+using detail::access;
 using detail::context;
 using detail::file;
 using detail::sync_task;
 
 } // namespace koru
+
+#include "detail/win_macros_end.inl"
