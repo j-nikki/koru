@@ -1,3 +1,5 @@
+#pragma once
+
 #include "detail/utils.h"
 
 namespace koru
@@ -121,7 +123,5 @@ class sync_task : public sync_pointer<T, sync_task<T>>::template storage<T>
     using promise_type = promise<T>;
 };
 } // namespace detail
-
 using detail::sync_task;
-
 } // namespace koru
