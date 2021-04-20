@@ -63,7 +63,23 @@ namespace koru::detail
     Cls &operator=(const Cls &) = delete;                                      \
     Cls &operator=(Cls &&) = delete
 
+constexpr inline struct {
+    template <class F>
+    constexpr auto operator=(F &&f) const noexcept
+    {
+        struct R {
+            F f;
+            ~R() { f(); }
+        };
+        return R{static_cast<F &&>(f)};
+    }
+} defer;
+
+#define KORU_defer                                                             \
+    const auto KORU_concat(defer, __LINE__) = ::koru::detail::defer =
+
 [[noreturn]] void throw_last_winapi_error();
+[[noreturn]] void throw_last_wsa_error();
 
 template <class T, class F, class... Args>
 constexpr KORU_inline T &or_(T &val, F &&f, Args &&...args) noexcept(

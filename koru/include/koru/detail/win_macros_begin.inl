@@ -16,8 +16,20 @@
 #pragma push_macro("INVALID_HANDLE_VALUE")
 #pragma push_macro("STATUS_WAIT_0")
 #pragma push_macro("WAIT_OBJECT_0")
-#define INFINITE 0xFFFFFFFF   // Infinite timeout
-#define ERROR_IO_PENDING 997L // dderror
+#pragma push_macro("AF_UNSPEC")
+#pragma push_macro("AF_INET")
+#pragma push_macro("AF_INET6")
+#pragma push_macro("SOCK_STREAM")
+#pragma push_macro("SOCK_DGRAM")
+#pragma push_macro("IPPROTO_TCP")
+#pragma push_macro("IPPROTO_UDP")
+#pragma push_macro("WSADESCRIPTION_LEN")
+#pragma push_macro("WSASYS_STATUS_LEN")
+#pragma push_macro("MAKEWORD")
+#pragma warning(push)
+#pragma warning(disable : 4005) /* macro redefinition */
+#define INFINITE 0xFFFFFFFF     // Infinite timeout
+#define ERROR_IO_PENDING 997L   // dderror
 #define GENERIC_READ (0x80000000L)
 #define GENERIC_WRITE (0x40000000L)
 #define FILE_FLAG_OVERLAPPED 0x40000000
@@ -31,6 +43,21 @@
 #define OPEN_ALWAYS 4
 #define TRUNCATE_EXISTING 5
 #define MAXIMUM_WAIT_OBJECTS 64 // Maximum number of wait objects
-#define INVALID_HANDLE_VALUE ((HANDLE)(LONG_PTR)-1)
-#define STATUS_WAIT_0 ((DWORD)0x00000000L)
+#define INVALID_HANDLE_VALUE                                                   \
+    ((::koru::detail::HANDLE)(::koru::detail::LONG_PTR)-1)
+#define STATUS_WAIT_0 ((::koru::detail::DWORD)0x00000000L)
 #define WAIT_OBJECT_0 ((STATUS_WAIT_0) + 0)
+#define AF_UNSPEC 0    // unspecified
+#define AF_INET 2      // internetwork: UDP, TCP, etc.
+#define AF_INET6 23    // Internetwork Version 6
+#define SOCK_STREAM 1  /* stream socket */
+#define SOCK_DGRAM 2   /* datagram socket */
+#define IPPROTO_TCP 6  /* tcp */
+#define IPPROTO_UDP 17 /* user datagram protocol */
+#define WSADESCRIPTION_LEN 256
+#define WSASYS_STATUS_LEN 128
+#define MAKEWORD(low, high)                                                    \
+    ((::koru::detail::WORD)(                                                   \
+        ((::koru::detail::BYTE)(low)) |                                        \
+        ((::koru::detail::WORD)((::koru::detail::BYTE)(high))) << 8))
+#pragma warning(pop)

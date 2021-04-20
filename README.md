@@ -3,7 +3,7 @@ Koru (from Finglish *korutiini*) is a library that facilitates using overlapped 
 
 In the 2008 book *Concurrent Programming on Windows* by Joe Duffy, different models of notifying an awaiter of an overlapped I/O completion are presented. IOCP was presented as the go-to rendezvous mechanism for any "serious" async I/O. `WaitForMultipleObjects`, the function this library uses, has a limit of waiting on only up to `MAXIMUM_WAIT_OBJECTS` handles\* and engages no thread pools / APCs, latter possibly being a pro in the sense that it models coöperative multitasking - no control mechanisms to govern access on shared resources, for example, is required.
 
-On the account of aforementioned, it is evident that the approach opted for here does not scale, but works well for a proof-of-concept library utilizing C++20 coroutines.
+On the account of aforementioned, it is evident that the approach opted for here does not scale, but works nevertheless as a proof-of-concept library utilizing C++20 coroutines.
 
 \*It is technically possible to wait on more than `MAXIMUM_WAIT_OBJECTS` handles, say, by creating `⌈N/MAXIMUM_WAIT_OBJECTS⌉` threads, where `N` is the number of handles to wait on, and each thread waits on up to `MAXIMUM_WAIT_OBJECTS` handles.
 

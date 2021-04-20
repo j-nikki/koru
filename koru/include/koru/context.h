@@ -1,8 +1,13 @@
-﻿#pragma once
+﻿//
+// I/O CONTEXT : WFMO loop awakening coroutines awaiting async I/Os
+//
+
+#pragma once
 
 #include "detail/utils.h"
 #include "detail/winapi.h"
 #include "file.h"
+#include "socket.h"
 #include <coroutine>
 #include <exception>
 #include <mutex>
@@ -12,13 +17,12 @@
 
 namespace koru
 {
-constexpr inline std::size_t max_ios = MAXIMUM_WAIT_OBJECTS;
 namespace detail
 {
-
-//
-// I/O CONTEXT : WFMO loop awakening coroutines awaiting async I/Os
-//
+SOCKET create_socket(const wchar_t *node, const wchar_t *service,
+                     const ADDRINFOW &hints);
+} // namespace detail
+constexpr inline std::size_t max_ios = MAXIMUM_WAIT_OBJECTS;
 
 /// @brief Orchestrates the awaiting of asynchronous I/Os.
 /// @tparam AtomicIos Whether it's possible for multiple I/O submissions to happen simultaneously. Required by AsyncIos.
@@ -46,14 +50,15 @@ class context
         friend class context;
 
         template <class OpT, class BufT>
-        KORU_inline file_task(context &c, OpT op, HANDLE hfile, uint64_t offset,
-                              BufT buf, DWORD nbytes)
+        KORU_inline file_task(context &c, OpT op, detail::HANDLE hfile,
+                              uint64_t offset, BufT buf, detail::DWORD nbytes)
             : last_{c.last_}
         {
             ol_.Offset     = static_cast<uint32_t>(offset);
             ol_.OffsetHigh = static_cast<uint32_t>(offset >> 32);
-            ol_.hEvent     = or_(c.evs_[c.last_.sz], KORU_fref(CreateEventW),
-                             nullptr, false, false, nullptr);
+            ol_.hEvent =
+                detail::or_(c.evs_[c.last_.sz], KORU_fref(detail::CreateEventW),
+                            nullptr, false, false, nullptr);
 
             if (op(hfile, buf, nbytes, nullptr, &ol_)) {
                 // I/O completed synchronously (e.g., cache hit)
@@ -62,7 +67,7 @@ class context
                     last_.unlock();
             } else if (GetLastError() != ERROR_IO_PENDING) {
                 // Error occurred
-                throw_last_winapi_error();
+                detail::throw_last_winapi_error();
             } else {
                 // Async I/O initiated successfully
                 last_.p = &c.coros_[c.last_.sz++];
@@ -87,14 +92,17 @@ class context
         }
 
       private:
-        OVERLAPPED ol_;
+        detail::OVERLAPPED ol_;
         struct ptr {
             constexpr KORU_inline ptr(const auto &) {}
             KORU_defctor(ptr, = delete;);
             coro_ptr *p;
         };
-        struct ptr_and_lock : lock<false> {
-            constexpr KORU_inline ptr_and_lock(auto &x) : lock<false>{x.srwl} {}
+        struct ptr_and_lock : detail::lock<false> {
+            constexpr KORU_inline ptr_and_lock(auto &x)
+                : detail::lock<false>{x.srwl}
+            {
+            }
             KORU_defctor(ptr_and_lock, = delete;);
             coro_ptr *p;
         };
@@ -102,7 +110,32 @@ class context
     };
 
   public:
-    [[nodiscard]] KORU_defctor(context, = default;);
+    [[nodiscard]] KORU_defctor(context, {
+        if (detail::WSAStartup(MAKEWORD(2, 2), &wsadata) != 0)
+            detail::throw_last_wsa_error();
+    });
+
+    ~context()
+    {
+        WSACleanup();
+        for (int sz = 0; evs_[sz]; ++sz)
+            CloseHandle(evs_[sz]);
+    }
+
+    /// @brief Creates a socket that can be operated on by *this.
+    /// @param node String denoting a host name or numeric address.
+    /// @param service String denoting a service name or port number.
+    /// @param ii The desired protocol family and socket type.
+    /// @return An object that represents the created socket.
+    [[nodiscard]] KORU_inline socket create(const wchar_t *node,
+                                            const wchar_t *service,
+                                            detail::inet_info ii = tcp)
+    {
+        const detail::ADDRINFOW hints{.ai_family   = ii.family,
+                                      .ai_socktype = ii.socktype,
+                                      .ai_protocol = ii.protocol};
+        return {detail::create_socket(node, service, hints)};
+    }
 
     /// @brief Opens a file that can be operated on by *this.
     /// @param fname WinAPI-conformant path specifier denoting a file.
@@ -110,31 +143,15 @@ class context
     /// @return An object that represents the opened file.
     [[nodiscard]] file open(const wchar_t *fname, access acs = access::read)
     {
-        const auto handle = CreateFileW(
-            fname, static_cast<DWORD>(acs),
+        const auto handle = detail::CreateFileW(
+            fname, static_cast<detail::DWORD>(acs),
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-            static_cast<DWORD>(acs == access::read ? OPEN_EXISTING
-                                                   : OPEN_ALWAYS),
+            static_cast<detail::DWORD>(acs == access::read ? OPEN_EXISTING
+                                                           : OPEN_ALWAYS),
             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
         if (handle == INVALID_HANDLE_VALUE)
-            throw_last_winapi_error();
+            detail::throw_last_winapi_error();
         return {handle};
-    }
-
-    /// @brief Initiates the read of file that completes either synchronously or asynchronously.
-    /// @param hfile A file opened by *this in a call to the member function open(). Must have read access.
-    /// @param offset A byte offset at which to start reading.
-    /// @param buffer A pointer denoting the recipient buffer.
-    /// @param nbytes The maximum number of bytes to read.
-    /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline file_task read(HANDLE hfile, uint64_t offset,
-                                             LPVOID buffer, DWORD nbytes)
-    {
-        // The call to ReadFile() has to be 'memoized' like this because the
-        // OVERLAPPED structure supplied to the call has to persist in
-        // memory throughout the potentionally asynchronously completing
-        // I/O.
-        return {*this, KORU_fref(ReadFile), hfile, offset, buffer, nbytes};
     }
 
     /// @brief Initiates the read of file that completes either synchronously or asynchronously.
@@ -142,26 +159,14 @@ class context
     /// @param buffer A pointer denoting the recipient buffer.
     /// @param nbytes The maximum number of bytes to read.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline auto read(file::location l, LPVOID buffer,
-                                        DWORD nbytes)
+    [[nodiscard]] KORU_inline file_task read(file::location l, void *buffer,
+                                             uint32_t nbytes)
     {
-        return read(l.handle, l.offset, buffer, nbytes);
-    }
-
-    /// @brief Initiates the write of file that completes either synchronously or asynchronously.
-    /// @param hfile A file opened by *this in a call to the member function open(). Must have write access.
-    /// @param offset A byte offset at which to start writing.
-    /// @param buffer A pointer denoting the source buffer.
-    /// @param nbytes The maximum number of bytes to write.
-    /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline file_task write(HANDLE hfile, uint64_t offset,
-                                              LPCVOID buffer, DWORD nbytes)
-    {
-        // The call to WriteFile() has to be 'memoized' like this because
-        // the OVERLAPPED structure supplied to the call has to persist in
+        // The call to ReadFile() has to be 'memoized' like this because the
+        // OVERLAPPED structure supplied to the call has to persist in
         // memory throughout the potentionally asynchronously completing
         // I/O.
-        return {*this, KORU_fref(WriteFile), hfile, offset, buffer, nbytes};
+        return {*this, KORU_fref(ReadFile), l.handle, l.offset, buffer, nbytes};
     }
 
     /// @brief Initiates the write of file that completes either synchronously or asynchronously.
@@ -169,10 +174,16 @@ class context
     /// @param buffer A pointer denoting the source buffer.
     /// @param nbytes The maximum number of bytes to write.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline auto write(file::location l, LPCVOID buffer,
-                                         DWORD nbytes)
+    [[nodiscard]] KORU_inline file_task write(file::location l,
+                                              const void *buffer,
+                                              uint32_t nbytes)
     {
-        return write(l.handle, l.offset, buffer, nbytes);
+        // The call to WriteFile() has to be 'memoized' like this because
+        // the OVERLAPPED structure supplied to the call has to persist in
+        // memory throughout the potentionally asynchronously completing
+        // I/O.
+        return {*this, KORU_fref(WriteFile), l.handle, l.offset, buffer,
+                nbytes};
     }
 
   private:
@@ -180,9 +191,9 @@ class context
     KORU_inline auto lock_or_empty() noexcept
     {
         if constexpr (AtomicIos)
-            return lock<Shared>{last_.srwl};
+            return detail::lock<Shared>{last_.srwl};
         else
-            return empty{};
+            return detail::empty{};
     }
 
   public:
@@ -196,11 +207,11 @@ class context
 
         while (sz != init_sz) {
             const auto h_idx = static_cast<unsigned>(
-                WaitForMultipleObjects(static_cast<DWORD>(sz), evs_, false,
-                                       INFINITE) -
+                WaitForMultipleObjects(static_cast<detail::DWORD>(sz), evs_,
+                                       false, INFINITE) -
                 WAIT_OBJECT_0);
             if (h_idx > static_cast<unsigned>(sz)) {
-                throw_last_winapi_error();
+                detail::throw_last_winapi_error();
 #pragma warning(suppress : 4127) /* conditional expression is constant */
             } else if (!AsyncIos || h_idx != 0) {
                 // Dequeue and resume the corresponding coro
@@ -220,23 +231,20 @@ class context
         }
     }
 
-    ~context()
-    {
-        while (last_.sz--)
-            CloseHandle(evs_[last_.sz]);
-    }
-
   private:
-    HANDLE evs_[nmax]{if_<!AsyncIos>(nullptr, KORU_fref(CreateEventW), nullptr,
-                                     false, false, nullptr)};
-    coro_ptr coros_[nmax];
+    detail::HANDLE evs_[nmax]{detail::if_<!AsyncIos>(
+        nullptr, KORU_fref(CreateEventW), nullptr, false, false, nullptr)};
 
     // These are for Natvis to be able to display event-coro pairings.
-    static constexpr std::size_t off = sizeof(evs_);
+    static constexpr std::size_t off = sizeof(context::evs_);
     struct item;
 
+    coro_ptr coros_[nmax];
+
+    detail::WSADATA wsadata;
+
     struct size_and_lock {
-        SRWLOCK srwl;
+        detail::SRWLOCK srwl;
         int sz = init_sz;
         KORU_inline KORU_defctor(
             size_and_lock, noexcept { InitializeSRWLock(&srwl); });
@@ -248,9 +256,6 @@ class context
     std::conditional_t<AtomicIos, size_and_lock, size> last_;
 #pragma warning(suppress : 4820) /* padding added after data member */
 };
-
-} // namespace detail
-using detail::context;
 } // namespace koru
 
 #include "detail/win_macros_end.inl"
