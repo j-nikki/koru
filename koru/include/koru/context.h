@@ -12,6 +12,7 @@
 
 namespace koru
 {
+constexpr inline std::size_t max_ios = MAXIMUM_WAIT_OBJECTS;
 namespace detail
 {
 
@@ -22,15 +23,14 @@ namespace detail
 /// @brief Orchestrates the awaiting of asynchronous I/Os.
 /// @tparam AtomicIos Whether it's possible for multiple I/O submissions to happen simultaneously. Required by AsyncIos.
 /// @tparam AsyncIos Whether it's possible for an I/O to be submitted while WaitForMultipleObjects is ongoing.
-/// @tparam MaxIos The maximum simultaneously awaited-on I/Os; can not exceed (async_ios ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS).
+/// @tparam MaxIos The maximum simultaneously awaited-on I/Os; can not exceed (async_ios ? max_ios - 1 : max_ios).
 template <bool AtomicIos = false, bool AsyncIos = false,
-          std::size_t MaxIos = static_cast<std::size_t>(
-              AsyncIos ? MAXIMUM_WAIT_OBJECTS - 1 : MAXIMUM_WAIT_OBJECTS)>
+          std::size_t MaxIos =
+              static_cast<std::size_t>(AsyncIos ? max_ios - 1 : max_ios)>
 class context
 {
     static_assert(!AsyncIos || AtomicIos, "AtomicIos is required by AsyncIos");
-    static_assert(MaxIos <= (AsyncIos ? MAXIMUM_WAIT_OBJECTS - 1
-                                      : MAXIMUM_WAIT_OBJECTS),
+    static_assert(MaxIos <= (AsyncIos ? max_ios - 1 : max_ios),
                   "MaxIos is too big");
 
     static constexpr std::size_t nmax = AsyncIos ? MaxIos + 1 : MaxIos;
