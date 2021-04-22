@@ -76,6 +76,7 @@ struct WSADATA {
     char szSystemStatus[WSASYS_STATUS_LEN + 1];
     unsigned short iMaxSockets;
     unsigned short iMaxUdpDg;
+#pragma warning(suppress : 4820) /* padding added after data member */
     char *lpVendorInfo;
 #endif
 #pragma warning(suppress : 4820) /* padding added after data member */
