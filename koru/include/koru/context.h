@@ -232,8 +232,9 @@ class context
     }
 
   private:
-    detail::HANDLE evs_[nmax]{detail::if_<!AsyncIos>(
-        nullptr, KORU_fref(CreateEventW), nullptr, false, false, nullptr)};
+    detail::HANDLE evs_[nmax]{
+        detail::if_<!AsyncIos>(nullptr, KORU_fref(detail::CreateEventW),
+                               nullptr, false, false, nullptr)};
 
     // These are for Natvis to be able to display event-coro pairings.
     static constexpr std::size_t off = sizeof(context::evs_);
@@ -247,7 +248,7 @@ class context
         detail::SRWLOCK srwl;
         int sz = init_sz;
         KORU_inline KORU_defctor(
-            size_and_lock, noexcept { InitializeSRWLock(&srwl); });
+            size_and_lock, noexcept { detail::InitializeSRWLock(&srwl); });
 #pragma warning(suppress : 4820) /* padding added after data member */
     };
     struct size {
