@@ -10,13 +10,11 @@
 
 namespace koru
 {
-
 namespace detail
 {
 struct inet_info {
     int family, socktype, protocol;
 };
-} // namespace detail
 
 class socket
 {
@@ -27,11 +25,16 @@ class socket
 
   public:
     KORU_defctor(socket, = delete;);
-    ~socket() { closesocket(s_); }
+    ~socket()
+    {
+        [[maybe_unused]] const auto res = closesocket(s_);
+        KORU_assert(res == 0);
+    }
 
   private:
     detail::SOCKET s_;
 };
+} // namespace detail
 
 static constexpr inline detail::inet_info //
     tcp{AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP},

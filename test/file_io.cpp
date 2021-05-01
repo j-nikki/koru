@@ -20,7 +20,7 @@ koru::sync_task<std::size_t> write_hash(auto &ctx, const wchar_t *src,
 {
     std::size_t h;
     {
-        auto f          = ctx.open(src);
+        auto f          = ctx.file(src);
         auto sz         = GetFileSize(f.native_handle, nullptr);
         auto buf        = std::make_unique_for_overwrite<char[]>(sz);
         auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);
@@ -29,7 +29,7 @@ koru::sync_task<std::size_t> write_hash(auto &ctx, const wchar_t *src,
     {
         char buf[32];
         auto sz = snprintf(buf, 32, "%zu", h);
-        auto f  = ctx.open(dst, koru::access::write);
+        auto f  = ctx.file(dst, koru::access::write);
         co_await ctx.write(f.at(0), &buf[0], static_cast<DWORD>(sz));
     }
     co_return h;
@@ -37,7 +37,7 @@ koru::sync_task<std::size_t> write_hash(auto &ctx, const wchar_t *src,
 
 koru::sync_task<std::size_t> read_hash(auto &ctx, const wchar_t *path)
 {
-    auto f          = ctx.open(path);
+    auto f          = ctx.file(path);
     auto sz         = GetFileSize(f.native_handle, nullptr);
     auto buf        = std::make_unique_for_overwrite<char[]>(sz);
     auto bytes_read = co_await ctx.read(f.at(0), buf.get(), sz);

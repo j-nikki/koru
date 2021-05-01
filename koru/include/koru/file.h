@@ -10,13 +10,10 @@
 
 namespace koru
 {
-
-enum class access : detail::DWORD {
-    read       = GENERIC_READ,
-    write      = GENERIC_WRITE,
-    read_write = GENERIC_READ | GENERIC_WRITE
-};
-
+template <bool, bool, std::size_t>
+class context;
+namespace detail
+{
 class file
 {
     template <bool, bool, std::size_t>
@@ -24,14 +21,19 @@ class file
 
     struct location {
         uint64_t offset;
-        detail::HANDLE handle;
+        HANDLE handle;
 #pragma warning(suppress : 4820) /* padding added after data member */
     };
 
-    constexpr file(detail::HANDLE handle) noexcept : native_handle(handle) {}
+    constexpr file(HANDLE handle) noexcept : native_handle(handle) {}
 
   public:
     KORU_defctor(file, = delete;);
+    ~file()
+    {
+        [[maybe_unused]] const auto res = CloseHandle(native_handle);
+        KORU_assert(res != 0);
+    }
 
     /// @brief A convenience function to facilitate specifying file-location info in read/write operations.
     /// @param offset A byte offset into *this.
@@ -42,7 +44,14 @@ class file
     }
 
     /// @brief This is the WinAPI handle representing the file.
-    const detail::HANDLE native_handle;
+    const HANDLE native_handle;
+};
+} // namespace detail
+
+enum class access : detail::DWORD {
+    read       = GENERIC_READ,
+    write      = GENERIC_WRITE,
+    read_write = GENERIC_READ | GENERIC_WRITE
 };
 
 } // namespace koru

@@ -118,8 +118,10 @@ class context
     ~context()
     {
         WSACleanup();
-        for (int sz = 0; evs_[sz]; ++sz)
-            CloseHandle(evs_[sz]);
+        for (int sz = 0; evs_[sz]; ++sz) {
+            [[maybe_unused]] const auto res = CloseHandle(evs_[sz]);
+            KORU_assert(res != 0);
+        }
     }
 
     /// @brief Creates a socket that can be operated on by *this.
@@ -127,9 +129,9 @@ class context
     /// @param service String denoting a service name or port number.
     /// @param ii The desired protocol family and socket type.
     /// @return An object that represents the created socket.
-    [[nodiscard]] KORU_inline socket create(const wchar_t *node,
-                                            const wchar_t *service,
-                                            detail::inet_info ii = tcp)
+    [[nodiscard]] KORU_inline detail::socket
+    socket(const wchar_t *const node, const wchar_t *const service,
+           const detail::inet_info ii = tcp)
     {
         const detail::ADDRINFOW hints{.ai_family   = ii.family,
                                       .ai_socktype = ii.socktype,
@@ -141,7 +143,8 @@ class context
     /// @param fname WinAPI-conformant path specifier denoting a file.
     /// @param acs Kind of operations allowed on the file.
     /// @return An object that represents the opened file.
-    [[nodiscard]] file open(const wchar_t *fname, access acs = access::read)
+    [[nodiscard]] detail::file file(const wchar_t *fname,
+                                    const access acs = access::read)
     {
         const auto handle = detail::CreateFileW(
             fname, static_cast<detail::DWORD>(acs),
@@ -156,34 +159,26 @@ class context
 
     /// @brief Initiates the read of file that completes either synchronously or asynchronously.
     /// @param l A location on a file opened by *this in a call to the member function open(). The file must have read access.
-    /// @param buffer A pointer denoting the recipient buffer.
+    /// @param buf A pointer denoting the recipient buffer.
     /// @param nbytes The maximum number of bytes to read.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline file_task read(file::location l, void *buffer,
-                                             uint32_t nbytes)
+    [[nodiscard]] KORU_inline file_task read(const detail::file::location l,
+                                             void *const buf,
+                                             const uint32_t nbytes)
     {
-        // The call to ReadFile() has to be 'memoized' like this because the
-        // OVERLAPPED structure supplied to the call has to persist in
-        // memory throughout the potentionally asynchronously completing
-        // I/O.
-        return {*this, KORU_fref(ReadFile), l.handle, l.offset, buffer, nbytes};
+        return {*this, KORU_fref(ReadFile), l.handle, l.offset, buf, nbytes};
     }
 
     /// @brief Initiates the write of file that completes either synchronously or asynchronously.
     /// @param l A location on a file opened by *this in a call to the member function open(). The file must have write access.
-    /// @param buffer A pointer denoting the source buffer.
+    /// @param buf A pointer denoting the source buffer.
     /// @param nbytes The maximum number of bytes to write.
     /// @return Task object representing the file operation; must be awaited on immediately.
-    [[nodiscard]] KORU_inline file_task write(file::location l,
-                                              const void *buffer,
-                                              uint32_t nbytes)
+    [[nodiscard]] KORU_inline file_task write(const detail::file::location l,
+                                              const void *const buf,
+                                              const uint32_t nbytes)
     {
-        // The call to WriteFile() has to be 'memoized' like this because
-        // the OVERLAPPED structure supplied to the call has to persist in
-        // memory throughout the potentionally asynchronously completing
-        // I/O.
-        return {*this, KORU_fref(WriteFile), l.handle, l.offset, buffer,
-                nbytes};
+        return {*this, KORU_fref(WriteFile), l.handle, l.offset, buf, nbytes};
     }
 
   private:
